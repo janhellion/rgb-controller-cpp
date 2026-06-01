@@ -22,6 +22,7 @@ struct PacketHeader {
 enum PacketType : uint32_t {
     REQUEST_CONTROLLER_COUNT  = 0,
     REQUEST_CONTROLLER_DATA   = 1,
+    REQUEST_PROTOCOL_VERSION = 40,
     SET_CLIENT_NAME           = 50,
     RGBCONTROLLER_RESIZEZONE  = 1000,
     RGBCONTROLLER_UPDATELEDS          = 1050,
@@ -68,6 +69,15 @@ public:
     bool update_single_led(uint32_t device_id, uint32_t led_id,
                            uint8_t r, uint8_t g, uint8_t b);
     bool set_mode(uint32_t device_id, uint32_t mode_id);
+    bool recv_any() {
+        // Drain one response packet (handles notifications like Python's read())
+        PacketHeader hdr;
+        std::vector<uint8_t> data;
+        if (!recv_packet(hdr, data)) return false;
+        // DEVICE_LIST_UPDATED (packet_type=2) means read again
+        if (hdr.packet_type == 2) return recv_any();
+        return true;
+    }
 
 private:
     int m_sock = -1;

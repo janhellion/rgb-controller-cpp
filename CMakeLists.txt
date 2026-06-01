@@ -43,10 +43,10 @@ if(BUILD_KCM)
     find_package(Qt6 REQUIRED COMPONENTS Core Widgets Svg)
     find_package(KF6KCMUtils REQUIRED)
     find_package(KF6CoreAddons REQUIRED)
-    find_package(KF6Kirigami2 REQUIRED)
+    find_package(KF6Kirigami REQUIRED)
     find_package(KF6I18n REQUIRED)
 
-    kf6_add_kcmodule(rgb_controller_kcm SOURCES
+    add_library(rgb_controller_kcm MODULE
         src/main.cpp
         ${ENGINE_SRC}
     )
@@ -56,16 +56,24 @@ if(BUILD_KCM)
         Qt6::Widgets
         KF6::KCMUtils
         KF6::CoreAddons
-        KF6::Kirigami2
+        KF6::Kirigami
+        KF6::I18n
+    )
+
+    target_include_directories(rgb_controller_kcm PRIVATE ${CMAKE_SOURCE_DIR})
+
+    set_target_properties(rgb_controller_kcm PROPERTIES
+        AUTOMOC ON
+        PREFIX ""
     )
 
     install(TARGETS rgb_controller_kcm
-        DESTINATION ${KDE_INSTALL_QTPLUGINDIR}/kcm
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/qt6/plugins/plasma/kcms
     )
     install(FILES kcm_rgbcontroller.desktop
-        DESTINATION ${KDE_INSTALL_KSERVICESDIR}
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6
     )
     install(FILES kcm_rgbcontroller.json
-        DESTINATION ${KDE_INSTALL_KSERVICESDIR}
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6
     )
 endif()

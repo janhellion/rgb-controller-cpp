@@ -24,12 +24,33 @@ bool Client::connect(const char* host, uint16_t port) {
     addr.sin_port = htons(port);
     memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
 
+    // Set 1s timeout for initial handshake (exactly like Python library)
+    struct timeval tv = {1, 0};
+    setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     if (::connect(m_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         disconnect();
         return false;
     }
 
-    // Set client name
+    // Step 1: Send protocol version request (like Python library)
+    uint32_t proto = 0;
+    send_packet(0, REQUEST_PROTOCOL_VERSION, &proto, 4);
+
+    // Step 2: Try to read response (may timeout — that's OK)
+    PacketHeader hdr;
+    std::vector<uint8_t> resp;
+    if (recv_packet(hdr, resp)) {
+        if (resp.size() >= 4)
+            m_protocol_version = *reinterpret_cast<uint32_t*>(resp.data());
+    }
+    // On timeout, protocol stays at 0 (same as Python)
+
+    // Step 3: Set longer timeout for normal operation
+    tv.tv_sec = 3;
+    setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    // Step 4: Set client name
     set_client_name("rgb-controller-cpp");
     return true;
 }
@@ -148,18 +169,24 @@ bool Client::resize_zone(uint32_t device_id, uint32_t zone_id, uint32_t size) {
 
 bool Client::update_zone_leds(uint32_t device_id, uint32_t zone_id,
                                const std::vector<uint8_t>& rgb_data) {
-    // Pack: zone_id(4) + led_count(2) + num_colors(4) + RGB data
+    // OpenRGB protocol for UPDATEZONELEDS:
+    // inner: length(4) + zone_id(4) + led_count(2) + R,G,B,pad x N
     uint32_t led_count = rgb_data.size() / 3;
-    uint32_t total_size = 4 + 2 + 4 + rgb_data.size();
-    std::vector<uint8_t> packet(total_size);
+    uint32_t inner_size = 4 + 4 + 2 + led_count * 4;  // RGB + pad byte
+    std::vector<uint8_t> inner(inner_size);
 
-    *reinterpret_cast<uint32_t*>(&packet[0]) = zone_id;
-    *reinterpret_cast<uint16_t*>(&packet[4]) = led_count;
-    *reinterpret_cast<uint32_t*>(&packet[6]) = total_size;
-    memcpy(&packet[10], rgb_data.data(), rgb_data.size());
+    *reinterpret_cast<uint32_t*>(&inner[0]) = inner_size;  // length prefix
+    *reinterpret_cast<uint32_t*>(&inner[4]) = zone_id;
+    *reinterpret_cast<uint16_t*>(&inner[8]) = led_count;
+    for (uint32_t i = 0; i < led_count; ++i) {
+        inner[10 + i*4]     = rgb_data[i*3];     // R
+        inner[10 + i*4 + 1] = rgb_data[i*3 + 1]; // G
+        inner[10 + i*4 + 2] = rgb_data[i*3 + 2]; // B
+        inner[10 + i*4 + 3] = 0;                  // pad
+    }
 
     return send_packet(device_id, RGBCONTROLLER_UPDATEZONELEDS,
-                       packet.data(), packet.size());
+                       inner.data(), inner.size());
 }
 
 bool Client::update_single_led(uint32_t device_id, uint32_t led_id,

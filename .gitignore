@@ -1,9 +1,11 @@
-__pycache__/
-*.pyc
 build/
+build-kcm/
 *.o
 *.so
 moc_*
-.kdev4/
-.idea/
-cmake-build-*/
+*.moc
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.autogen/

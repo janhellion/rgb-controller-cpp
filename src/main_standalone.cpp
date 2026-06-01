@@ -65,6 +65,10 @@ protected:
         m_running = true;
         if (!client.connect()) { m_running = false; return; }
 
+        // Known zones: (device, zone, leds)
+        const int ZONE_COUNT = 2;
+        const uint32_t ZONES[ZONE_COUNT][3] = {{0,1,7}, {1,0,3}};
+
         auto t_start = std::chrono::steady_clock::now();
         while (m_running) {
             if (!enabled) { msleep(100); continue; }
@@ -72,28 +76,33 @@ protected:
             auto now = std::chrono::steady_clock::now();
             float t = std::chrono::duration<float>(now - t_start).count();
 
-            // Get device data once
-            uint32_t count = client.get_controller_count();
-            if (count == 0) { msleep(500); continue; }
+            for (int zi = 0; zi < ZONE_COUNT; ++zi) {
+                uint32_t dev_id = ZONES[zi][0];
+                uint32_t zone_id = ZONES[zi][1];
+                uint32_t led_count = ZONES[zi][2];
 
-            for (uint32_t d = 0; d < count; ++d) {
-                auto dev = client.get_controller_data(d);
-                for (uint32_t z = 0; z < dev.zones.size(); ++z) {
-                    auto& zd = dev.zones[z];
-                    if (zd.led_count == 0) continue;
-
-                    std::vector<uint8_t> colors;
-                    if (effect_idx >= 0 && effect_idx < rgb::effect::EFFECT_COUNT) {
-                        rgb::effect::EFFECTS[effect_idx].fn(
-                            t, zd.led_count, colors,
-                            center_hue, hue_span, speed, intensity,
-                            breath_depth, 1.0f
-                        );
+                std::vector<uint8_t> colors;
+                if (effect_idx >= 0 && effect_idx < rgb::effect::EFFECT_COUNT) {
+                    rgb::effect::EFFECTS[effect_idx].fn(
+                        t, led_count, colors,
+                        center_hue, hue_span, speed, intensity,
+                        breath_depth, 1.0f
+                    );
+                }
+                if (colors.size() >= led_count * 3) {
+                    client.resize_zone(dev_id, zone_id, led_count);
+                    client.recv_any();  // drain resize response
+                    std::vector<uint8_t> update_data;
+                    update_data.reserve(led_count * 3);
+                    for (uint32_t li = 0; li < led_count && li < 60; ++li) {
+                        update_data.push_back(colors[li*3]);
+                        update_data.push_back(colors[li*3+1]);
+                        update_data.push_back(colors[li*3+2]);
                     }
-                    if (colors.size() >= zd.led_count * 3) {
-                        client.resize_zone(d, z, zd.led_count);
-                        client.update_zone_leds(d, z, colors);
-                    }
+                    if (!client.update_zone_leds(dev_id, zone_id, update_data))
+                        fprintf(stderr, "update FAILED dev=%u zone=%u\n", dev_id, zone_id);
+                    // Drain all pending responses (like Python's self.update())
+                    for (int r = 0; r < 3; ++r) client.recv_any();
                 }
             }
             msleep(50); // 20 Hz
