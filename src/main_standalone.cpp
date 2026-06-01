@@ -92,6 +92,7 @@ static float read_gpu_temp() {
 class RGBThread : public QThread {
     Q_OBJECT
     volatile bool m_running = false;
+    volatile bool m_force_update = false;  // wake signal
 public:
     rgb::openrgb::Client client;
     // per-device state (device 0 = cooler, device 1 = mouse)
@@ -105,6 +106,7 @@ public:
     int preview_r = 0, preview_g = 0, preview_b = 0;
 
     void stop() { m_running = false; }
+    void wake() { m_force_update = true; }
 
 protected:
     void run() override {
@@ -123,6 +125,13 @@ protected:
 
         while (m_running) {
             if (!enabled) { msleep(200); continue; }
+
+            // Fast wake: sleep in 25ms chunks, check force_update
+            for (int w = 0; w < 2 && m_running && !m_force_update; ++w)
+                msleep(25);
+            m_force_update = false;
+
+            if (!m_running) break;
 
             auto now = std::chrono::steady_clock::now();
             float t = std::chrono::duration<float>(now - t_start).count();
@@ -166,7 +175,7 @@ protected:
 
                 if (colors.size() >= led_count * 3) {
                     client.resize_zone(dev_id, zone_id, led_count);
-                    client.recv_any();  // ASUS AURA drain
+                    client.drain();  // ASUS AURA drain
 
                     std::vector<uint8_t> update_data;
                     update_data.reserve(led_count * 3);
@@ -180,7 +189,7 @@ protected:
                     if (!client.update_zone_leds(dev_id, zone_id, update_data))
                         fprintf(stderr, "RGB: update FAILED dev=%u zone=%u\n", dev_id, zone_id);
 
-                    for (int r = 0; r < 3; ++r) client.recv_any();
+                    client.drain();
 
                     // Capture preview from cooler first LED
                     if (zi == 0) {
@@ -320,13 +329,13 @@ public:
         m_panel_mouse   = new DevicePanel("🖱 Mouse (Logitech G203, 3 LEDs)", this);
 
         connect(m_panel_cooler->effect_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this](int i) { m_thread->effect_idx[0] = i; });
+                this, [this](int i) { m_thread->effect_idx[0] = i; m_thread->wake(); });
         connect(m_panel_cooler->palette_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this](int i) { m_thread->palette_idx[0] = i; });
+                this, [this](int i) { m_thread->palette_idx[0] = i; m_thread->wake(); });
         connect(m_panel_mouse->effect_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this](int i) { m_thread->effect_idx[1] = i; });
+                this, [this](int i) { m_thread->effect_idx[1] = i; m_thread->wake(); });
         connect(m_panel_mouse->palette_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this](int i) { m_thread->palette_idx[1] = i; });
+                this, [this](int i) { m_thread->palette_idx[1] = i; m_thread->wake(); });
 
         layout->addWidget(m_panel_cooler);
         layout->addWidget(m_panel_mouse);
@@ -342,6 +351,7 @@ public:
         connect(m_speed_slider, &QSlider::valueChanged, this, [sp_lbl, this](int v) {
             sp_lbl->setText(QString("%1x").arg(v/100.0, 0, 'f', 2));
             m_thread->speed = v / 100.0f;
+            m_thread->wake();
         });
         g3l->addWidget(m_speed_slider, 0, 1);
         g3l->addWidget(sp_lbl, 0, 2);
@@ -354,6 +364,7 @@ public:
         connect(m_intensity_slider, &QSlider::valueChanged, this, [in_lbl, this](int v) {
             in_lbl->setText(QString("%1%").arg(v));
             m_thread->intensity = v / 100.0f;
+            m_thread->wake();
         });
         g3l->addWidget(m_intensity_slider, 1, 1);
         g3l->addWidget(in_lbl, 1, 2);
@@ -366,6 +377,7 @@ public:
         connect(m_breath_slider, &QSlider::valueChanged, this, [br_lbl, this](int v) {
             br_lbl->setText(QString("%1%").arg(v));
             m_thread->breath_depth = v / 100.0f;
+            m_thread->wake();
         });
         g3l->addWidget(m_breath_slider, 2, 1);
         g3l->addWidget(br_lbl, 2, 2);
@@ -386,6 +398,19 @@ public:
             m_temp_label->setText(t.trimmed().isEmpty() ? "Sensors N/A" : t);
         });
         temp_timer->start(2000);
+
+        // Apply button (force immediate refresh)
+        auto* apply_btn = new QPushButton("⚡ Apply Now", this);
+        apply_btn->setFixedHeight(40);
+        apply_btn->setStyleSheet(
+            "QPushButton { background: #89b4fa; color: #1e1e2e; font-size: 14px; font-weight: bold; border-radius: 8px; }"
+            "QPushButton:hover { background: #b4d0fb; }"
+            "QPushButton:pressed { background: #74a8f5; }"
+        );
+        connect(apply_btn, &QPushButton::clicked, this, [this]() {
+            m_thread->wake();
+        });
+        layout->addWidget(apply_btn);
 
         layout->addStretch();
 

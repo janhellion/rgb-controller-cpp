@@ -95,7 +95,7 @@ protected:
                         m_b = static_cast<int>(colors[2] * intensity);
                     }
                     client.resize_zone(dev_id, zone_id, led_count);
-                    client.recv_any();
+                    client.drain();
                     std::vector<uint8_t> update_data;
                     update_data.reserve(led_count * 3);
                     for (uint32_t li = 0; li < led_count && li < 60; ++li) {
@@ -104,7 +104,7 @@ protected:
                         update_data.push_back(static_cast<uint8_t>(colors[li*3+2] * intensity));
                     }
                     client.update_zone_leds(dev_id, zone_id, update_data);
-                    for (int r = 0; r < 3; ++r) client.recv_any();
+                    client.drain();
                 }
             }
             msleep(50);

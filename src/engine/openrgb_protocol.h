@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <sys/select.h>
 
 namespace rgb::openrgb {
 
@@ -77,6 +78,22 @@ public:
         // DEVICE_LIST_UPDATED (packet_type=2) means read again
         if (hdr.packet_type == 2) return recv_any();
         return true;
+    }
+
+    void drain() {
+        // Non-blocking drain — only reads if data is available
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(m_sock, &fds);
+        struct timeval tv = {0, 50000};  // 50ms max wait
+        while (select(m_sock + 1, &fds, nullptr, nullptr, &tv) > 0) {
+            PacketHeader hdr;
+            std::vector<uint8_t> data;
+            if (!recv_packet(hdr, data)) break;
+            FD_ZERO(&fds);
+            FD_SET(m_sock, &fds);
+            tv = {0, 10000};  // 10ms for subsequent reads
+        }
     }
 
 private:
