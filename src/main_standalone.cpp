@@ -200,7 +200,6 @@ protected:
                 }
             }
 
-            msleep(50);  // ~20 FPS
             ++frame;
         }
         fprintf(stderr, "RGB: thread stopped\n");
