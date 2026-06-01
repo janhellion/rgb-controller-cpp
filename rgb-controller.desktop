@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RGB Controller
+Comment=Control addressable RGB LEDs (cooler, case logo, mouse)
+Icon=preferences-system
+Exec=rgb-controller
+Terminal=false
+Categories=Settings;Hardware;Qt;
+StartupNotify=false
+X-KDE-StartupNotify=false

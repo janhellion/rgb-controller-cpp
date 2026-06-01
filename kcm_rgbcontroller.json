@@ -1,0 +1,17 @@
+{
+    "KPlugin": {
+        "Authors": [
+            { "Email": "janhellion@users.noreply.github.com", "Name": "Jan Hellion" }
+        ],
+        "Category": "Hardware",
+        "Description": "Control addressable RGB LEDs via OpenRGB",
+        "Icon": "preferences-system",
+        "Id": "kcm_rgbcontroller",
+        "License": "MIT",
+        "Name": "RGB Controller",
+        "Version": "1.0.0"
+    },
+    "X-KDE-SystemSettings": {
+        "ParentComponents": ["kcm_rgbcontroller"]
+    }
+}

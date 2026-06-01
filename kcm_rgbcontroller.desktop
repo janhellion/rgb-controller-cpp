@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=KCModule
+Name=RGB Controller
+Comment=Control addressable RGB LEDs from System Settings
+Icon=preferences-system
+X-KDE-Library=kf6/kcm_rgbcontroller
+X-KDE-ParentComponents=kcm_rgbcontroller
+X-KDE-SystemSettingsCategory=Hardware
+X-KDE-SystemSettingsSubCategory=RGB Lighting
+X-KDE-Weight=50
