@@ -96,6 +96,7 @@ struct SharedState {
 // ── Render Thread ──
 static void render_loop(SharedState& st){
     orgb_client::Client cl; if(!cl.connect()){st.running=false;return;}
+    if(!st.running){cl.disconnect();return;}  // closed during connect
     cl.resize_zone(0,1,7); std::this_thread::sleep_for(200ms);
     const uint32_t ZONES[2][3]={{0,1,7},{1,0,3}};
     const bool use_device_update[2]={false,true};
