@@ -49,16 +49,7 @@ struct EffectInfo {
     EffectFn fn;
 };
 
-inline const EffectInfo EFFECTS[] = {
-    {"Rainbow", effect_rainbow},
-    {"Comet", effect_comet},
-    {"Fire", effect_fire},
-    {"Aurora", effect_aurora},
-    {"Twinkle", effect_twinkle},
-    {"Ripple", effect_ripple},
-    {"Pulse", effect_pulse},
-};
-
-inline constexpr int EFFECT_COUNT = sizeof(EFFECTS) / sizeof(EFFECTS[0]);
+extern const EffectInfo EFFECTS[];
+extern const int EFFECT_COUNT;
 
 } // namespace rgb::effect
