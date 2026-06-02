@@ -125,15 +125,15 @@ class ColorPreview : public QWidget {
     Q_OBJECT
     int m_r=0,m_g=0,m_b=0; QString m_label;
 public:
-    ColorPreview(const QString& l,QWidget* p=nullptr):QWidget(p),m_label(l){setFixedSize(72,88);}
+    ColorPreview(const QString& l,QWidget* p=nullptr):QWidget(p),m_label(l){setFixedSize(48,60);}
     void setColor(int r,int g,int b){m_r=r;m_g=g;m_b=b;update();}
 protected:
     void paintEvent(QPaintEvent*)override{
         QPainter pt(this);pt.setRenderHint(QPainter::Antialiasing);
         pt.setBrush(QColor(m_r,m_g,m_b));pt.setPen(QPen(QColor(60,60,60),2));
-        pt.drawRoundedRect(6,0,60,60,8,8);
-        pt.setPen(QColor(205,214,244));pt.setFont(QFont("sans-serif",9));
-        pt.drawText(QRect(0,64,72,20),Qt::AlignCenter,m_label);
+        pt.drawRoundedRect(4,0,40,40,6,6);
+        pt.setPen(QColor(205,214,244));pt.setFont(QFont("sans-serif",8));
+        pt.drawText(QRect(0,44,48,16),Qt::AlignCenter,m_label);
     }
 };
 
@@ -275,10 +275,20 @@ class MainWindow : public QMainWindow {
     SharedState m_st; std::thread m_thread;
     ColorPreview *m_pv[2]; DevicePanel *m_pn[2];
     QPushButton *m_dirBtn[2];  // direction toggles
-    QPushButton *m_on_btn, *m_tmp_btn, *m_pwr_btn; QLabel *m_temp_label;
+    QPushButton *m_on_btn, *m_tmp_btn, *m_pwr_btn; QLabel *m_temp_label, *m_pwr_status;
     QTimer *m_ui_timer, *m_pwr_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
 
     void wake(){ m_st.wake=true; m_st.cv.notify_one(); }
+    void updatePowerSaveLabel(){
+        if(!m_st.power_save){ m_pwr_status->setText(""); return; }
+        bool night=is_nighttime();
+        bool idle=is_user_idle(600);
+        QString s;
+        if(night) s+="🌙 Night";
+        if(idle)  s+=(s.isEmpty()?"":" ") + QString("💤 Idle");
+        if(s.isEmpty()) s="⏺ Active";
+        m_pwr_status->setText(s);
+    }
     template<typename F> void apply(F fn, bool reset=false){
         std::lock_guard<std::mutex> lk(m_st.mtx); fn();
         if(reset) m_st.reset_timer=true;
@@ -314,22 +324,25 @@ public:
         m_pv[0]=new ColorPreview("Cooler",this); m_pv[1]=new ColorPreview("Mouse",this);
         auto* hinfo=new QVBoxLayout();
         auto* tl=new QLabel("RGB Controller"); tl->setStyleSheet("font-size:18px;font-weight:bold;color:#89b4fa");
-        m_temp_label=new QLabel; m_temp_label->setStyleSheet("color:#f9e2af;font-size:12px");
+        m_temp_label=new QLabel; m_temp_label->setStyleSheet("color:#f9e2af;font-size:11px");
         hinfo->addWidget(tl); hinfo->addWidget(m_temp_label);
         hdr->addWidget(m_pv[0]); hdr->addWidget(m_pv[1]); hdr->addLayout(hinfo,1);
 
-        auto* tgls=new QVBoxLayout();
-        m_on_btn=new QPushButton("System ON"); m_on_btn->setCheckable(true); m_on_btn->setChecked(true);
-        m_on_btn->setStyleSheet("QPushButton{background:#a6e3a1;color:#1e1e2e;font-size:12px;border-radius:6px;padding:4px 12px;font-weight:bold}QPushButton:!checked{background:#45475a;color:#6c7086}");
-        connect(m_on_btn,&QPushButton::toggled,[this](bool v){m_st.enabled=v;m_on_btn->setText(v?"System ON":"System OFF");});
-        m_tmp_btn=new QPushButton("Temp: OFF"); m_tmp_btn->setCheckable(true);
-        m_tmp_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:12px;border-radius:6px;padding:4px 12px}QPushButton:checked{background:#fab387;color:#1e1e2e;font-weight:bold}");
-        connect(m_tmp_btn,&QPushButton::toggled,[this](bool v){m_st.temp_mode=v;m_tmp_btn->setText(v?"Temp: ON":"Temp: OFF");});
-        m_pwr_btn=new QPushButton("Power Save: OFF"); m_pwr_btn->setCheckable(true);
-        m_pwr_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:12px;border-radius:6px;padding:4px 12px}QPushButton:checked{background:#a6e3a1;color:#1e1e2e;font-weight:bold}");
-        connect(m_pwr_btn,&QPushButton::toggled,[this](bool v){m_st.power_save=v;m_pwr_btn->setText(v?"Power Save: ON":"Power Save: OFF");if(!v)m_st.power_save_active=false;});
-        tgls->addWidget(m_on_btn); tgls->addWidget(m_tmp_btn); tgls->addWidget(m_pwr_btn);
-        hdr->addLayout(tgls); lo->addLayout(hdr);
+        // Controls row: horizontal buttons + power save status
+        auto* ctrlRow=new QHBoxLayout(); ctrlRow->setSpacing(4);
+        m_on_btn=new QPushButton("ON"); m_on_btn->setFixedHeight(26); m_on_btn->setCheckable(true); m_on_btn->setChecked(true);
+        m_on_btn->setStyleSheet("QPushButton{background:#a6e3a1;color:#1e1e2e;font-size:11px;border-radius:4px;padding:2px 10px;font-weight:bold}QPushButton:!checked{background:#45475a;color:#6c7086}");
+        connect(m_on_btn,&QPushButton::toggled,[this](bool v){m_st.enabled=v;m_on_btn->setText(v?"ON":"OFF");});
+        m_tmp_btn=new QPushButton("TEMP"); m_tmp_btn->setFixedHeight(26); m_tmp_btn->setCheckable(true);
+        m_tmp_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:11px;border-radius:4px;padding:2px 10px}QPushButton:checked{background:#fab387;color:#1e1e2e;font-weight:bold}");
+        connect(m_tmp_btn,&QPushButton::toggled,[this](bool v){m_st.temp_mode=v;});
+        m_pwr_btn=new QPushButton("PWR"); m_pwr_btn->setFixedHeight(26); m_pwr_btn->setCheckable(true);
+        m_pwr_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:11px;border-radius:4px;padding:2px 10px}QPushButton:checked{background:#a6e3a1;color:#1e1e2e;font-weight:bold}");
+        connect(m_pwr_btn,&QPushButton::toggled,[this](bool v){m_st.power_save=v;if(!v)m_st.power_save_active=false;updatePowerSaveLabel();});
+        ctrlRow->addWidget(m_on_btn); ctrlRow->addWidget(m_tmp_btn); ctrlRow->addWidget(m_pwr_btn);
+        m_pwr_status=new QLabel(""); m_pwr_status->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
+        ctrlRow->addWidget(m_pwr_status); ctrlRow->addStretch();
+        hdr->addLayout(ctrlRow); lo->addLayout(hdr);
 
         // Tabs: Cooler | Mouse | Palettes
         m_tabs=new QTabWidget(this);
@@ -488,9 +501,10 @@ public:
         // Power save timer — checks idle + night every 15s
         m_pwr_timer=new QTimer(this);
         connect(m_pwr_timer,&QTimer::timeout,[this](){
-            if(!m_st.power_save) return;
+            if(!m_st.power_save){ m_st.power_save_active=false; return; }
             bool idle = is_user_idle(600) || is_nighttime();
             m_st.power_save_active = idle;
+            updatePowerSaveLabel();
         });
         m_pwr_timer->start(15000);
 
@@ -519,8 +533,12 @@ public:
             for(int di=0;di<2;++di){
                 int pi=m_st.palette_idx[di];
                 QString palName=(pi<0)?"Custom":PALETTES[pi].name;
-                m_pn[di]->status->setText(QString("Live · %1 · %2")
-                    .arg(rgb::effect::EFFECTS[m_st.effect_idx[di]].name, palName));
+                QString pwr = m_st.power_save && m_st.power_save_active ? " 🌙 PWR" : "";
+                m_pn[di]->status->setText(QString("Live · %1 · %2%3")
+                    .arg(rgb::effect::EFFECTS[m_st.effect_idx[di]].name, palName, pwr));
+                m_pn[di]->status->setStyleSheet(pwr.isEmpty()
+                    ? "color:#a6e3a1;font-size:11px"
+                    : "color:#f9e2af;font-size:11px");
                 // Keep swatch in sync with actual palette
                 if(pi<0) m_pn[di]->swatch->setPalette(m_st.custom_hue, m_st.custom_span);
                 else m_pn[di]->swatch->setPalette(PALETTES[pi].center, PALETTES[pi].span);
@@ -560,6 +578,7 @@ public:
         bool ps=s.value("power_save",0).toInt();
         m_pwr_btn->setChecked(ps);
         m_st.power_save=ps;
+        if(ps) updatePowerSaveLabel();
     }
 
     ~MainWindow() override {
