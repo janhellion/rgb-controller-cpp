@@ -164,9 +164,15 @@ static void render_loop(SharedState& st){
             }
 
             if(ei>=0 && ei<rgb::effect::EFFECT_COUNT)
-                rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,dir);
+                rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
 
             if(colors.size()>=n*3){
+                // Reverse gradient direction: swap LEDs along the strip
+                if(dir < 0) {
+                    for(uint32_t i=0; i<n/2; ++i)
+                        for(int c=0; c<3; ++c)
+                            std::swap(colors[i*3+c], colors[(n-1-i)*3+c]);
+                }
                 if(use_device_update[di]) cl.update_leds(dev,colors.data(),n);
                 else                      cl.update_zone_leds(dev,zone,colors.data(),n);
                 st.preview_r[di]=colors[0]; st.preview_g[di]=colors[1]; st.preview_b[di]=colors[2];
@@ -301,8 +307,8 @@ public:
                 [this,di](int v){ apply([=]{ m_st.breath_depth[di]=v/100.f; }); });
             // Direction toggle
             auto* dirRow=new QHBoxLayout();
-            dirRow->addWidget(new QLabel("Direction:",this));
-            auto* dirBtn=new QPushButton("Forward",this);
+            dirRow->addWidget(new QLabel("Gradient:",this));
+            auto* dirBtn=new QPushButton("Normal",this);
             dirBtn->setCheckable(true);
             dirBtn->setStyleSheet(
                 "QPushButton{background:#313244;color:#cdd6f4;border:1px solid #45475a;"
@@ -311,7 +317,7 @@ public:
             );
             connect(dirBtn,&QPushButton::toggled,[this,di,dirBtn](bool rev){
                 apply([=]{ m_st.direction[di]=rev?-1.f:1.f; });
-                dirBtn->setText(rev?"Reverse":"Forward");
+                dirBtn->setText(rev?"Reversed":"Normal");
             });
             m_dirBtn[di]=dirBtn;
             dirRow->addWidget(dirBtn); dirRow->addStretch();

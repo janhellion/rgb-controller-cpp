@@ -121,8 +121,11 @@ static void render_loop(SharedState& st){
              spd=st.speed[di];it=st.intensity[di];bd=st.breath_depth[di];ei=st.effect_idx[di];dir=st.direction[di];
              if(st.temp_mode){float mx=std::max(ct,gt);if(mx<0)mx=40;float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));ch=240.f*(1.f-r);hs=25.f;}
              else{int pi=st.palette_idx[di];if(pi<0){ch=st.custom_hue;hs=st.custom_span;}else{ch=PALETTES[pi].center;hs=PALETTES[pi].span;}}}
-            if(ei>=0&&ei<rgb::effect::EFFECT_COUNT)rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,dir);
-            if(colors.size()>=n*3){if(use_device_update[di])cl.update_leds(dev,colors.data(),n);else cl.update_zone_leds(dev,zone,colors.data(),n);st.preview_r[di]=colors[0];st.preview_g[di]=colors[1];st.preview_b[di]=colors[2];}
+            if(ei>=0&&ei<rgb::effect::EFFECT_COUNT)rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
+            if(colors.size()>=n*3){
+                // Reverse gradient direction: swap LEDs along the strip
+                if(dir<0){for(uint32_t i=0;i<n/2;++i)for(int c=0;c<3;++c)std::swap(colors[i*3+c],colors[(n-1-i)*3+c]);}
+                if(use_device_update[di])cl.update_leds(dev,colors.data(),n);else cl.update_zone_leds(dev,zone,colors.data(),n);st.preview_r[di]=colors[0];st.preview_g[di]=colors[1];st.preview_b[di]=colors[2];}
         }++frame;
     }cl.disconnect();
 }
@@ -195,11 +198,11 @@ public:
             addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},[this,di](int v){apply([=]{m_st.breath_depth[di]=v/100.f;});});
             // Direction toggle
             auto* dirRow=new QHBoxLayout();
-            dirRow->addWidget(new QLabel("Direction:",w));
-            auto* dirBtn=new QPushButton("Forward",w);
+            dirRow->addWidget(new QLabel("Gradient:",w));
+            auto* dirBtn=new QPushButton("Normal",w);
             dirBtn->setCheckable(true);
             dirBtn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:2px 12px;font-size:11px;font-weight:bold}QPushButton:checked{background:#89b4fa;color:#1e1e2e;border:1px solid #89b4fa}");
-            connect(dirBtn,&QPushButton::toggled,[this,di,dirBtn](bool rev){apply([=]{m_st.direction[di]=rev?-1.f:1.f;});dirBtn->setText(rev?"Reverse":"Forward");});
+            connect(dirBtn,&QPushButton::toggled,[this,di,dirBtn](bool rev){apply([=]{m_st.direction[di]=rev?-1.f:1.f;});dirBtn->setText(rev?"Reversed":"Normal");});
             m_dirBtn[di]=dirBtn;
             dirRow->addWidget(dirBtn);dirRow->addStretch();
             sglo->addLayout(dirRow,sglo->rowCount(),0,1,3);
