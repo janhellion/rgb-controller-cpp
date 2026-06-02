@@ -54,9 +54,9 @@ if(BUILD_KCM)
         ${ENGINE_SRC}
     )
 
-    kcmutils_add_qml_kcm(rgb_controller_kcm SOURCES ${KCM_SRC})
+    kcmutils_add_qml_kcm(kcm_rgbcontroller SOURCES ${KCM_SRC})
 
-    target_link_libraries(rgb_controller_kcm PRIVATE
+    target_link_libraries(kcm_rgbcontroller PRIVATE
         Qt6::Core Qt6::Qml Qt6::Quick
         KF6::KCMUtils
         KF6::KCMUtilsQuick
@@ -66,7 +66,7 @@ if(BUILD_KCM)
         pthread
     )
 
-    target_include_directories(rgb_controller_kcm PRIVATE
+    target_include_directories(kcm_rgbcontroller PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
     )

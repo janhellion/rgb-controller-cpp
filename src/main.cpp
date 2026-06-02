@@ -36,6 +36,6 @@ private:
     RGBControllerEngine *m_engine;
 };
 
-K_PLUGIN_CLASS_WITH_JSON(RGBControllerKCM, "rgb_controller_kcm.json")
+K_PLUGIN_CLASS_WITH_JSON(RGBControllerKCM, "kcm_rgbcontroller.json")
 
 #include "main.moc"
