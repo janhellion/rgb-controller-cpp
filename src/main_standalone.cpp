@@ -253,7 +253,12 @@ public:
         for(int i=0;i<PALETTE_COUNT;++i){
             auto* sw=new PaletteSwatch(pw);sw->setPalette(PALETTES[i].center,PALETTES[i].span);
             auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name).arg(PALETTES[i].desc),pw);info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
-            connect(sw,&PaletteSwatch::clicked,[this,i](){m_pn[0]->palette->setCurrentIndex(i);m_pn[1]->palette->setCurrentIndex(i);apply([&]{m_st.palette_idx[0]=i;m_st.palette_idx[1]=i;});});
+            connect(sw,&PaletteSwatch::clicked,[this,i](){
+                fprintf(stderr,"swatch clicked: %d (%s)\n",i,PALETTES[i].name);
+                m_pn[0]->palette->setCurrentIndex(i);
+                m_pn[1]->palette->setCurrentIndex(i);
+                apply([&]{ m_st.palette_idx[0]=i; m_st.palette_idx[1]=i; });
+            });
             pwlo->addWidget(sw);pwlo->addWidget(info);
         }pwlo->addStretch();
         pscroll->setWidget(pw);palLo->addWidget(pscroll);
@@ -281,12 +286,14 @@ public:
         m_ui_timer=new QTimer(this);
         connect(m_ui_timer,&QTimer::timeout,[this](){m_pv[0]->setColor(m_st.preview_r[0],m_st.preview_g[0],m_st.preview_b[0]);m_pv[1]->setColor(m_st.preview_r[1],m_st.preview_g[1],m_st.preview_b[1]);std::lock_guard<std::mutex> lk(m_st.mtx);m_pn[0]->status->setText(QString("Live · %1 · %2").arg(rgb::effect::EFFECTS[m_st.effect_idx[0]].name).arg(PALETTES[m_st.palette_idx[0]].name));m_pn[1]->status->setText(QString("Live · %1 · %2").arg(rgb::effect::EFFECTS[m_st.effect_idx[1]].name).arg(PALETTES[m_st.palette_idx[1]].name));});m_ui_timer->start(200);
 
-        // ── Restore settings ──
+        // ── Restore settings + force initial apply ──
         QSettings s("rgb-controller","rgb-controller");
         m_pn[0]->effect->setCurrentIndex(s.value("cooler_effect",0).toInt());m_pn[0]->palette->setCurrentIndex(s.value("cooler_palette",0).toInt());
         m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());m_pn[1]->palette->setCurrentIndex(s.value("mouse_palette",0).toInt());
         m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center,PALETTES[m_pn[0]->palette->currentIndex()].span);
         m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center,PALETTES[m_pn[1]->palette->currentIndex()].span);
+        // Force apply in case combo already at this index (no signal for unchanged value)
+        apply([&]{m_st.effect_idx[0]=m_pn[0]->effect->currentIndex();m_st.effect_idx[1]=m_pn[1]->effect->currentIndex();m_st.palette_idx[0]=m_pn[0]->palette->currentIndex();m_st.palette_idx[1]=m_pn[1]->palette->currentIndex();});
 
         m_st.running=true;m_thread=std::thread(render_loop,std::ref(m_st));
     }
