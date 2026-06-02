@@ -25,6 +25,8 @@
 #include <QTabWidget>
 #include <QDialog>
 
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -63,6 +65,60 @@ static constexpr int N_PALETTES = sizeof(PALETTES)/sizeof(PALETTES[0]);
 static float read_sysfs(const char* p){ std::ifstream f(p); int v=-1; f>>v; return v>0?v/1000.f:-1; }
 static float cpu_temp(){ for(int i=0;i<8;++i){char b[128];snprintf(b,sizeof(b),"/sys/class/hwmon/hwmon%d/temp1_input",i);float t=read_sysfs(b);if(t>0)return t;} return -1; }
 static float gpu_temp(){ return read_sysfs("/sys/class/hwmon/hwmon2/temp1_input"); }
+
+// ── Solar calculator (Mexico City: 19.43N, 99.13W) ──
+// Returns true if current time is between sunset and sunrise
+static bool is_nighttime() {
+    using namespace std::chrono;
+    auto tt = system_clock::to_time_t(system_clock::now());
+    struct tm* lt = localtime(&tt);
+    int doy = lt->tm_yday;   // day of year 0-365
+    int hour = lt->tm_hour;  // local hour
+    int min = lt->tm_min;
+
+    // Solar declination (radians): 23.44° * cos(360/365 * (doy + 10))
+    float decl = 23.44f * cosf(6.283185f / 365.0f * (doy + 10) * (M_PI / 180.0f));
+    // Latitude in radians
+    float lat = 19.43f * (M_PI / 180.0f);
+    // Hour angle at sunset: cos(HA) = -tan(lat)*tan(decl)
+    float cos_ha = -tanf(lat) * tanf(decl * (M_PI / 180.0f));
+    // Clamp for polar regions (never night or never day)
+    if(cos_ha > 1.0f) return false;   // midnight sun — never night
+    if(cos_ha < -1.0f) return false;  // polar night treated as always night? keep on
+    float ha = acosf(cos_ha) * (180.0f / M_PI) / 15.0f; // hours
+
+    // Sunrise/sunset in local time (UTC-6, no DST correction for simplicity)
+    float sunrise = 12.0f - ha + 6.62f;  // 6.62 = 99.13°W / 15° per hour
+    float sunset  = 12.0f + ha + 6.62f;
+    // Wrap to 0-24
+    if(sunrise > 24.0f) sunrise -= 24.0f;
+    if(sunrise < 0.0f)  sunrise += 24.0f;
+    if(sunset > 24.0f)  sunset -= 24.0f;
+    if(sunset < 0.0f)   sunset += 24.0f;
+
+    float now = hour + min / 60.0f;
+    // Night: after sunset OR before sunrise
+    if(sunrise < sunset) return now < sunrise || now > sunset;
+    else                 return now > sunset && now < sunrise;
+}
+
+// ── Idle check via logind ──
+// Returns true if user has been idle for more than `threshold_seconds`
+static bool is_user_idle(int threshold_seconds) {
+    // Read idle hint from logind over D-Bus
+    FILE* fp = popen(
+        "dbus-send --print-reply --dest=org.freedesktop.login1 "
+        "/org/freedesktop/login1 org.freedesktop.login1.Manager.GetIdleHint 2>/dev/null",
+        "r");
+    if(!fp) return false;
+    char buf[64] = {};
+    if(fgets(buf, sizeof(buf), fp)) {
+        pclose(fp);
+        return strstr(buf, "boolean true") != nullptr;
+    }
+    pclose(fp);
+    return false;
+}
 
 // ── Color preview circle ──
 class ColorPreview : public QWidget {
@@ -105,6 +161,8 @@ protected:
 struct SharedState {
     std::atomic<bool> running{false}, enabled{true}, temp_mode{false}, wake{false};
     std::atomic<bool> reset_timer{false};  // reset animation on palette change
+    std::atomic<bool> power_save{false};    // user toggle for power save
+    std::atomic<bool> power_save_active{false}; // currently dimmed
     std::mutex mtx;
     int effect_idx[2]={0,0}, palette_idx[2]={0,0};
     float speed[2]={0.15f,0.15f}, intensity[2]={1.0f,1.0f}, breath_depth[2]={0.15f,0.15f};
@@ -167,14 +225,21 @@ static void render_loop(SharedState& st){
                 rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
 
             if(colors.size()>=n*3){
+                // Power save: dim to 8% when idle/night
+                float dim = (st.power_save && st.power_save_active) ? 0.08f : 1.0f;
                 // Reverse gradient direction: swap LEDs along the strip
                 if(dir < 0) {
                     for(uint32_t i=0; i<n/2; ++i)
                         for(int c=0; c<3; ++c)
                             std::swap(colors[i*3+c], colors[(n-1-i)*3+c]);
                 }
-                if(use_device_update[di]) cl.update_leds(dev,colors.data(),n);
-                else                      cl.update_zone_leds(dev,zone,colors.data(),n);
+                if(use_device_update[di]) {
+                    if(dim < 1.0f) for(uint32_t i=0;i<n*3;++i) colors[i]=uint8_t(colors[i]*dim);
+                    cl.update_leds(dev,colors.data(),n);
+                } else {
+                    if(dim < 1.0f) for(uint32_t i=0;i<n*3;++i) colors[i]=uint8_t(colors[i]*dim);
+                    cl.update_zone_leds(dev,zone,colors.data(),n);
+                }
                 st.preview_r[di]=colors[0]; st.preview_g[di]=colors[1]; st.preview_b[di]=colors[2];
             }
         }
@@ -210,8 +275,8 @@ class MainWindow : public QMainWindow {
     SharedState m_st; std::thread m_thread;
     ColorPreview *m_pv[2]; DevicePanel *m_pn[2];
     QPushButton *m_dirBtn[2];  // direction toggles
-    QPushButton *m_on_btn, *m_tmp_btn; QLabel *m_temp_label;
-    QTimer *m_ui_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
+    QPushButton *m_on_btn, *m_tmp_btn, *m_pwr_btn; QLabel *m_temp_label;
+    QTimer *m_ui_timer, *m_pwr_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
 
     void wake(){ m_st.wake=true; m_st.cv.notify_one(); }
     template<typename F> void apply(F fn, bool reset=false){
@@ -260,7 +325,10 @@ public:
         m_tmp_btn=new QPushButton("Temp: OFF"); m_tmp_btn->setCheckable(true);
         m_tmp_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:12px;border-radius:6px;padding:4px 12px}QPushButton:checked{background:#fab387;color:#1e1e2e;font-weight:bold}");
         connect(m_tmp_btn,&QPushButton::toggled,[this](bool v){m_st.temp_mode=v;m_tmp_btn->setText(v?"Temp: ON":"Temp: OFF");});
-        tgls->addWidget(m_on_btn); tgls->addWidget(m_tmp_btn);
+        m_pwr_btn=new QPushButton("Power Save: OFF"); m_pwr_btn->setCheckable(true);
+        m_pwr_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:12px;border-radius:6px;padding:4px 12px}QPushButton:checked{background:#a6e3a1;color:#1e1e2e;font-weight:bold}");
+        connect(m_pwr_btn,&QPushButton::toggled,[this](bool v){m_st.power_save=v;m_pwr_btn->setText(v?"Power Save: ON":"Power Save: OFF");if(!v)m_st.power_save_active=false;});
+        tgls->addWidget(m_on_btn); tgls->addWidget(m_tmp_btn); tgls->addWidget(m_pwr_btn);
         hdr->addLayout(tgls); lo->addLayout(hdr);
 
         // Tabs: Cooler | Mouse | Palettes
@@ -417,6 +485,15 @@ public:
             m_temp_label->setText(s.isEmpty()?"Sensors N/A":s);
         }); tt->start(2000);
 
+        // Power save timer — checks idle + night every 15s
+        m_pwr_timer=new QTimer(this);
+        connect(m_pwr_timer,&QTimer::timeout,[this](){
+            if(!m_st.power_save) return;
+            bool idle = is_user_idle(600) || is_nighttime();
+            m_st.power_save_active = idle;
+        });
+        m_pwr_timer->start(15000);
+
         // Tray
         if(QSystemTrayIcon::isSystemTrayAvailable()){
             m_tray=new QSystemTrayIcon(this);
@@ -479,6 +556,10 @@ public:
         // Restore custom palette values
         m_st.custom_hue=s.value("custom_hue",200).toFloat();
         m_st.custom_span=s.value("custom_span",25).toFloat();
+        // Restore power save
+        bool ps=s.value("power_save",0).toInt();
+        m_pwr_btn->setChecked(ps);
+        m_st.power_save=ps;
     }
 
     ~MainWindow() override {
@@ -491,6 +572,7 @@ public:
         s.setValue("custom_span",m_st.custom_span);
         s.setValue("cooler_dir",m_st.direction[0]<0?1:0);
         s.setValue("mouse_dir",m_st.direction[1]<0?1:0);
+        s.setValue("power_save",m_st.power_save?1:0);
         m_st.running=false; m_st.cv.notify_all();
         if(m_thread.joinable()) m_thread.join();
     }
