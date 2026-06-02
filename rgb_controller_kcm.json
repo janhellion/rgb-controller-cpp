@@ -9,8 +9,13 @@
             }
         ],
         "Category": "Hardware",
-        "X-KDE-System-Settings-Parent-Category": "hardware",
-        "X-KDE-System-Settings-Uses-ModuleData": false,
-        "X-KDE-Weight": 50
-    }
+        "FormFactors": [
+            "desktop",
+            "tablet"
+        ],
+        "License": "GPL",
+        "Website": ""
+    },
+    "X-KDE-System-Settings-Parent-Category": "hardware",
+    "X-KDE-Weight": 50
 }

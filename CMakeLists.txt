@@ -5,12 +5,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Svg Qml Quick)
 
 set(ENGINE_SRC
     src/engine/effects.cpp
 )
 
+# ── Standalone tray app ──
 add_executable(rgb-controller
     src/main_standalone.cpp
     ${ENGINE_SRC}
@@ -31,29 +32,44 @@ include(GNUInstallDirs)
 install(TARGETS rgb-controller RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES rgb-controller.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 
+# ── KDE System Settings KCM (Plasma 6 QML-based) ──
 option(BUILD_KCM "Build KDE System Settings KCM plugin" OFF)
 if(BUILD_KCM)
-    find_package(Qt6 REQUIRED COMPONENTS Core Widgets Svg)
+    find_package(ECM REQUIRED NO_MODULE)
+    set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+    include(KDEInstallDirs)
+    include(KDECMakeSettings)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    set(BUILD_SHARED_LIBS ON)
+    find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick)
     find_package(KF6KCMUtils REQUIRED)
     find_package(KF6CoreAddons REQUIRED)
     find_package(KF6Kirigami REQUIRED)
     find_package(KF6I18n REQUIRED)
 
-    add_library(rgb_controller_kcm MODULE
-        src/main.cpp ${ENGINE_SRC}
+    set(KCM_SRC
+        src/main.cpp
+        src/kcm_engine.cpp
+        src/kcm_engine.h
+        ${ENGINE_SRC}
     )
 
+    kcmutils_add_qml_kcm(rgb_controller_kcm SOURCES ${KCM_SRC})
+
     target_link_libraries(rgb_controller_kcm PRIVATE
-        Qt6::Core Qt6::Widgets
-        KF6::KCMUtils KF6::CoreAddons KF6::Kirigami KF6::I18n
+        Qt6::Core Qt6::Qml Qt6::Quick
+        KF6::KCMUtils
+        KF6::KCMUtilsQuick
+        KF6::CoreAddons
+        KF6::Kirigami
+        KF6::I18n
         pthread
     )
 
-    target_include_directories(rgb_controller_kcm PRIVATE ${CMAKE_SOURCE_DIR})
+    target_include_directories(rgb_controller_kcm PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src
+    )
 
-    set_target_properties(rgb_controller_kcm PROPERTIES AUTOMOC ON PREFIX "")
-
-    install(TARGETS rgb_controller_kcm DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/qt6/plugins/plasma/kcms/systemsettings)
-    install(FILES kcm_rgbcontroller.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6)
-    install(FILES kcm_rgbcontroller.json DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6)
+    message(STATUS "KCM build enabled — target: rgb_controller_kcm")
 endif()
