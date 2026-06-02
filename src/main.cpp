@@ -101,10 +101,15 @@ static void render_loop(SharedState& st){
     const uint32_t ZONES[2][3]={{0,1,7},{1,0,3}};
     const bool use_device_update[2]={false,true};
     auto t0=std::chrono::steady_clock::now();int frame=0;std::vector<uint8_t> colors;
+    auto last_frame=t0;
     while(st.running){
         if(!st.enabled){std::this_thread::sleep_for(200ms);continue;}
         {std::unique_lock<std::mutex> lk(st.cv_mtx);st.cv.wait_for(lk,50ms,[&]{return !st.running||st.wake.load();});st.wake=false;}
         if(!st.running)break;
+        // Enforce minimum 20ms between frames
+        auto elapsed=std::chrono::steady_clock::now()-last_frame;
+        if(elapsed<20ms)std::this_thread::sleep_for(20ms-elapsed);
+        last_frame=std::chrono::steady_clock::now();
         auto now=std::chrono::steady_clock::now();if(st.reset_timer.exchange(false))t0=now;
         float t=std::chrono::duration<float>(now-t0).count();
         float ct=-1,gt=-1;if(st.temp_mode&&frame%30==0){ct=cpu_temp();gt=gpu_temp();}
