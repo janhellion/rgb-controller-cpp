@@ -214,7 +214,7 @@ static void render_loop(SharedState& st){
               if(st.temp_mode){
                   float mx=std::max(ct,gt); if(mx<0)mx=40;
                   float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));
-                  ch=240.f*(1.f-r); hs=25.f;
+                  ch=240.f+120.f*r; hs=25.f;
               } else {
                   int pi=st.palette_idx[di];
                   if(pi<0){ ch=st.custom_hue; hs=st.custom_span; }

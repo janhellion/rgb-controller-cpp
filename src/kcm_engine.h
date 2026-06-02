@@ -155,7 +155,7 @@ static void kcm_render_loop(KCMSharedState& st) {
                   if(++temp_frame%30==0){ std::ifstream f("/sys/class/hwmon/hwmon2/temp1_input"); int v=-1; f>>v; cached_gt=v>0?v/1000.f:-1; }
                   float mx = std::max(cached_ct, cached_gt); if(mx<0) mx=40;
                   float r = std::max(0.f, std::min(1.f, (mx-30.f)/55.f));
-                  ch=240.f*(1.f-r); hs=25.f;
+                  ch=240.f+120.f*r; hs=25.f;
               } else {
                   int pi=st.palette_idx[di];
                   if(pi<0){ ch=st.custom_hue; hs=st.custom_span; }
