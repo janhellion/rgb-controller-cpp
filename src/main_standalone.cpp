@@ -108,6 +108,7 @@ struct SharedState {
     std::mutex mtx;
     int effect_idx[2]={0,0}, palette_idx[2]={0,0};
     float speed[2]={0.15f,0.15f}, intensity[2]={1.0f,1.0f}, breath_depth[2]={0.15f,0.15f};
+    float direction[2]={1.0f,1.0f};       // 1 = forward, -1 = reverse
     float custom_hue=200, custom_span=25;
     int preview_r[2]={}, preview_g[2]={}, preview_b[2]={};
     std::mutex cv_mtx; std::condition_variable cv;
@@ -148,9 +149,9 @@ static void render_loop(SharedState& st){
 
         for(int di=0;di<2;++di){
             uint32_t dev=ZONES[di][0], zone=ZONES[di][1], n=ZONES[di][2];
-            float ch,hs,spd,it,bd; int ei;
+            float ch,hs,spd,it,bd,dir; int ei;
             { std::lock_guard<std::mutex> lk(st.mtx);
-              spd=st.speed[di]; it=st.intensity[di]; bd=st.breath_depth[di]; ei=st.effect_idx[di];
+              spd=st.speed[di]; it=st.intensity[di]; bd=st.breath_depth[di]; ei=st.effect_idx[di]; dir=st.direction[di];
               if(st.temp_mode){
                   float mx=std::max(ct,gt); if(mx<0)mx=40;
                   float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));
@@ -163,7 +164,7 @@ static void render_loop(SharedState& st){
             }
 
             if(ei>=0 && ei<rgb::effect::EFFECT_COUNT)
-                rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
+                rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,dir);
 
             if(colors.size()>=n*3){
                 if(use_device_update[di]) cl.update_leds(dev,colors.data(),n);
@@ -202,6 +203,7 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
     SharedState m_st; std::thread m_thread;
     ColorPreview *m_pv[2]; DevicePanel *m_pn[2];
+    QPushButton *m_dirBtn[2];  // direction toggles
     QPushButton *m_on_btn, *m_tmp_btn; QLabel *m_temp_label;
     QTimer *m_ui_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
 
@@ -297,6 +299,23 @@ public:
                 [this,di](int v){ apply([=]{ m_st.intensity[di]=v/100.f; }); });
             addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},
                 [this,di](int v){ apply([=]{ m_st.breath_depth[di]=v/100.f; }); });
+            // Direction toggle
+            auto* dirRow=new QHBoxLayout();
+            dirRow->addWidget(new QLabel("Direction:",this));
+            auto* dirBtn=new QPushButton("Forward",this);
+            dirBtn->setCheckable(true);
+            dirBtn->setStyleSheet(
+                "QPushButton{background:#313244;color:#cdd6f4;border:1px solid #45475a;"
+                "border-radius:6px;padding:4px 16px;font-size:12px;font-weight:bold}"
+                "QPushButton:checked{background:#89b4fa;color:#1e1e2e;border:1px solid #89b4fa}"
+            );
+            connect(dirBtn,&QPushButton::toggled,[this,di,dirBtn](bool rev){
+                apply([=]{ m_st.direction[di]=rev?-1.f:1.f; });
+                dirBtn->setText(rev?"Reverse":"Forward");
+            });
+            m_dirBtn[di]=dirBtn;
+            dirRow->addWidget(dirBtn); dirRow->addStretch();
+            sglo->addLayout(dirRow,sglo->rowCount(),0,1,3);
             dLo->addWidget(sg); dLo->addStretch();
             m_tabs->addTab(dTab,tabNames[di]);
         }
@@ -431,6 +450,13 @@ public:
         m_pn[0]->palette->setCurrentIndex(std::min(s.value("cooler_palette",0).toInt(), N_PALETTES-1));
         m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());
         m_pn[1]->palette->setCurrentIndex(std::min(s.value("mouse_palette",0).toInt(), N_PALETTES-1));
+        // Restore direction (checked=True means reverse)
+        for(int di=0;di<2;++di){
+            const char* k[2]={"cooler_dir","mouse_dir"};
+            bool rev=s.value(k[di],0).toInt();
+            m_st.direction[di]=rev?-1.f:1.f;
+            if(m_dirBtn[di]) m_dirBtn[di]->setChecked(rev);
+        }
         // Swatch from actual palette (clamp Custom→0 for display)
         for(int di=0;di<2;++di){
             int ci=m_pn[di]->palette->currentIndex();
@@ -457,6 +483,8 @@ public:
         s.setValue("mouse_palette",std::min(m_pn[1]->palette->currentIndex(),N_PALETTES-1));
         s.setValue("custom_hue",m_st.custom_hue);
         s.setValue("custom_span",m_st.custom_span);
+        s.setValue("cooler_dir",m_st.direction[0]<0?1:0);
+        s.setValue("mouse_dir",m_st.direction[1]<0?1:0);
         m_st.running=false; m_st.cv.notify_all();
         if(m_thread.joinable()) m_thread.join();
     }
