@@ -90,15 +90,16 @@ void effect_aurora(float t, uint32_t n, std::vector<uint8_t>& out,
 void effect_twinkle(float t, uint32_t n, std::vector<uint8_t>& out,
                     float ch, float hs, float sp, float in, float bd, float dir) {
     float br = breath_val(t, sp, bd, in);
-    out.assign(n * 3, 0);
+    out.resize(n * 3);
     for (uint32_t i = 0; i < n; ++i) {
         uint32_t seed = uint32_t(i * 2654435761U + uint32_t(t * 4));
         float r = (seed & 0xFFFF) / 65536.0f;
-        // Only 15% of LEDs active at any time
-        if (r > 0.15f) continue;
-        float phase = fmodf(t * 4.0f * sp + r * 100.0f, 6.28318530718f);
-        float b = std::max(0.0f, std::cos(phase)) * br;
-        float hue = fmodf(ch + std::sin(float(i * 37 + uint32_t(t * 10))) * hs * 0.4f, 360.0f);
+        // 40% chance to twinkle, minimum 10% glow on all LEDs
+        float phase = fmodf(t * 6.0f * sp + r * 50.0f, 6.28318530718f);
+        float twinkle = std::max(0.0f, std::sin(phase));
+        float base = 0.10f;  // never fully dark
+        float b = (base + (1.0f - base) * twinkle * (r < 0.40f ? 1.0f : 0.15f)) * br;
+        float hue = fmodf(ch + std::sin(float(i * 37 + uint32_t(t * 8))) * hs * 0.4f, 360.0f);
         auto rgb = hsv360_to_rgb(hue, 1.0f, b);
         out[i*3]=rgb.r; out[i*3+1]=rgb.g; out[i*3+2]=rgb.b;
     }

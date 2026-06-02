@@ -107,8 +107,8 @@ struct SharedState {
     std::atomic<bool> reset_timer{false};  // reset animation on palette change
     std::mutex mtx;
     int effect_idx[2]={0,0}, palette_idx[2]={0,0};
-    float speed=0.15f, intensity=1.0f, breath_depth=0.15f;
-    float custom_hue=200, custom_span=25;  // for custom palette
+    float speed[2]={0.15f,0.15f}, intensity[2]={1.0f,1.0f}, breath_depth[2]={0.15f,0.15f};
+    float custom_hue=200, custom_span=25;
     int preview_r[2]={}, preview_g[2]={}, preview_b[2]={};
     std::mutex cv_mtx; std::condition_variable cv;
 };
@@ -145,7 +145,7 @@ static void render_loop(SharedState& st){
             uint32_t dev=ZONES[di][0], zone=ZONES[di][1], n=ZONES[di][2];
             float ch,hs,spd,it,bd; int ei;
             { std::lock_guard<std::mutex> lk(st.mtx);
-              spd=st.speed; it=st.intensity; bd=st.breath_depth; ei=st.effect_idx[di];
+              spd=st.speed[di]; it=st.intensity[di]; bd=st.breath_depth[di]; ei=st.effect_idx[di];
               if(st.temp_mode){
                   float mx=std::max(ct,gt); if(mx<0)mx=40;
                   float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));
@@ -250,53 +250,51 @@ public:
         tgls->addWidget(m_on_btn); tgls->addWidget(m_tmp_btn);
         hdr->addLayout(tgls); lo->addLayout(hdr);
 
-        // Tabs
+        // Tabs: Cooler | Mouse | Palettes
         m_tabs=new QTabWidget(this);
-
-        // ── Devices tab ──
-        auto* devTab=new QWidget; auto* devLo=new QVBoxLayout(devTab); devLo->setSpacing(8); devLo->setContentsMargins(4,4,4,4);
 
         m_pn[0]=new DevicePanel("Cooler (ASUS AURA, 7 LEDs)",this);
         m_pn[1]=new DevicePanel("Mouse (Logitech G203, 3 LEDs)",this);
+
+        const char* tabNames[2]={"❄ Cooler","🖱 Mouse"};
         for(int di=0;di<2;++di){
+            auto* dTab=new QWidget; auto* dLo=new QVBoxLayout(dTab); dLo->setSpacing(8); dLo->setContentsMargins(4,4,4,4);
+
+            // Device panel
             connect(m_pn[di]->effect, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
                     if(i>=0 && i<rgb::effect::EFFECT_COUNT) apply([=]{ m_st.effect_idx[di]=i; });
                 });
             connect(m_pn[di]->palette, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
-                    if(i==N_PALETTES){
-                        // User selected "Custom" from combo → stay on previous palette
-                        // (Custom is only meaningful when set via Palettes tab)
-                        return;
-                    }
+                    if(i==N_PALETTES) return;
                     if(i>=0 && i<N_PALETTES){
                         apply([=]{ m_st.palette_idx[di]=i; }, true);
                         m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
                     }
                 });
-            devLo->addWidget(m_pn[di]);
-        }
+            dLo->addWidget(m_pn[di]);
 
-        // Sliders
-        auto* sg=new QGroupBox("Speed & Brightness",this); auto* sglo=new QGridLayout(sg);
-        auto addSlider=[&](const char* label,int lo,int hi,int def,
-                            std::function<QString(int)> fmt,
-                            std::function<void(int)> cb){
-            int r=sglo->rowCount(); sglo->addWidget(new QLabel(label,this),r,0);
-            auto* sl=new QSlider(Qt::Horizontal,this); sl->setRange(lo,hi); sl->setValue(def);
-            auto* lb=new QLabel(fmt(def),this);
-            connect(sl,&QSlider::valueChanged,[lb,fmt,cb](int v){lb->setText(fmt(v));cb(v);});
-            sglo->addWidget(sl,r,1); sglo->addWidget(lb,r,2);
-        };
-        addSlider("Speed:",1,50,15,[](int v){return QString("%1x").arg(v/100.,0,'f',2);},
-            [this](int v){ apply([=]{ m_st.speed=v/100.f; }); });
-        addSlider("Brightness:",20,100,100,[](int v){return QString("%1%").arg(v);},
-            [this](int v){ apply([=]{ m_st.intensity=v/100.f; }); });
-        addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},
-            [this](int v){ apply([=]{ m_st.breath_depth=v/100.f; }); });
-        devLo->addWidget(sg); devLo->addStretch();
-        m_tabs->addTab(devTab,"🖥 Devices");
+            // Per-device sliders
+            auto* sg=new QGroupBox("Speed & Brightness",this); auto* sglo=new QGridLayout(sg);
+            auto addSlider=[&](const char* label,int lo,int hi,int def,
+                                std::function<QString(int)> fmt,
+                                std::function<void(int)> cb){
+                int r=sglo->rowCount(); sglo->addWidget(new QLabel(label,this),r,0);
+                auto* sl=new QSlider(Qt::Horizontal,this); sl->setRange(lo,hi); sl->setValue(def);
+                auto* lb=new QLabel(fmt(def),this);
+                connect(sl,&QSlider::valueChanged,[lb,fmt,cb](int v){lb->setText(fmt(v));cb(v);});
+                sglo->addWidget(sl,r,1); sglo->addWidget(lb,r,2);
+            };
+            addSlider("Speed:",1,50,15,[](int v){return QString("%1x").arg(v/100.,0,'f',2);},
+                [this,di](int v){ apply([=]{ m_st.speed[di]=v/100.f; }); });
+            addSlider("Brightness:",20,100,100,[](int v){return QString("%1%").arg(v);},
+                [this,di](int v){ apply([=]{ m_st.intensity[di]=v/100.f; }); });
+            addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},
+                [this,di](int v){ apply([=]{ m_st.breath_depth[di]=v/100.f; }); });
+            dLo->addWidget(sg); dLo->addStretch();
+            m_tabs->addTab(dTab,tabNames[di]);
+        }
 
         // ── Palettes tab ──
         auto* palTab=new QWidget; auto* palLo=new QVBoxLayout(palTab); palLo->setSpacing(4); palLo->setContentsMargins(4,4,4,4);
@@ -377,6 +375,7 @@ public:
         new QShortcut(QKeySequence("Ctrl+H"),this,[this]{hide();});
         new QShortcut(QKeySequence("Ctrl+1"),this,[this]{m_tabs->setCurrentIndex(0);});
         new QShortcut(QKeySequence("Ctrl+2"),this,[this]{m_tabs->setCurrentIndex(1);});
+        new QShortcut(QKeySequence("Ctrl+3"),this,[this]{m_tabs->setCurrentIndex(2);});
 
         // Temp display
         auto* tt=new QTimer(this);
