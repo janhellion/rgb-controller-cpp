@@ -32,6 +32,7 @@ enum PacketType : uint32_t {
     SET_CLIENT_NAME           = 50,
     DEVICE_LIST_UPDATED       = 100,
     RGBCONTROLLER_RESIZEZONE  = 1000,
+    RGBCONTROLLER_UPDATELEDS      = 1050,
     RGBCONTROLLER_UPDATEZONELEDS = 1051,
 };
 
@@ -101,7 +102,7 @@ struct Client {
                           const uint8_t* rgb, uint32_t n) {
         // [total_size:4] [zone_id:4] [led_count:2] [R,G,B,0 × N]
         uint32_t sz = 4 + 4 + 2 + n * 4;
-        uint8_t buf[1024];  // stack alloc — max ~255 LEDs
+        uint8_t buf[1024];
         *reinterpret_cast<uint32_t*>(buf)     = sz;
         *reinterpret_cast<uint32_t*>(buf + 4) = zone;
         *reinterpret_cast<uint16_t*>(buf + 8) = (uint16_t)n;
@@ -113,6 +114,23 @@ struct Client {
             buf[off+3] = 0;
         }
         return send_packet(dev, RGBCONTROLLER_UPDATEZONELEDS, buf, sz);
+    }
+
+    // Device-level LED update (no zone — for mice/keyboards)
+    bool update_leds(uint32_t dev, const uint8_t* rgb, uint32_t n) {
+        // [total_size:4] [led_count:2] [R,G,B,0 × N]
+        uint32_t sz = 4 + 2 + n * 4;
+        uint8_t buf[1024];
+        *reinterpret_cast<uint32_t*>(buf)     = sz;
+        *reinterpret_cast<uint16_t*>(buf + 4) = (uint16_t)n;
+        for (uint32_t i = 0; i < n; ++i) {
+            uint32_t off = 6 + i*4;
+            buf[off]   = rgb[i*3];
+            buf[off+1] = rgb[i*3+1];
+            buf[off+2] = rgb[i*3+2];
+            buf[off+3] = 0;
+        }
+        return send_packet(dev, RGBCONTROLLER_UPDATELEDS, buf, sz);
     }
 
     bool resize_zone(uint32_t dev, uint32_t zone, uint32_t size) {

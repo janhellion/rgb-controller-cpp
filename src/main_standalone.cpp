@@ -116,8 +116,13 @@ struct SharedState {
 // ── Render Thread ──
 static void render_loop(SharedState& st){
     orgb_client::Client cl; if(!cl.connect()){st.running=false;return;}
-    cl.resize_zone(0,1,7);cl.resize_zone(1,0,3);std::this_thread::sleep_for(200ms);
-    const uint32_t ZONES[2][3]={{0,1,7},{1,0,3}};
+    cl.resize_zone(0, 1, 7);  // cooler ARGB — needs resize
+    // Mouse: don't resize — Logitech G203 may not support it
+    std::this_thread::sleep_for(200ms);
+
+    const uint32_t ZONES[2][3] = {{0,1,7},{1,0,3}};
+    // Mouse uses device-level update_leds (1050), cooler uses zone-level (1051)
+    const bool use_device_update[2] = {false, true};
     auto t0=std::chrono::steady_clock::now();int frame=0;std::vector<uint8_t> colors;
     while(st.running){
         if(!st.enabled){std::this_thread::sleep_for(200ms);continue;}
@@ -132,7 +137,11 @@ static void render_loop(SharedState& st){
              if(st.temp_mode){float mx=std::max(ct,gt);if(mx<0)mx=40;float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));ch=240.f*(1.f-r);hs=25.f;}
              else{ch=PALETTES[st.palette_idx[di]].center;hs=PALETTES[st.palette_idx[di]].span;}}
             if(ei>=0&&ei<rgb::effect::EFFECT_COUNT)rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
-            if(colors.size()>=n*3){cl.update_zone_leds(dev,zone,colors.data(),n);st.preview_r[di]=colors[0];st.preview_g[di]=colors[1];st.preview_b[di]=colors[2];}
+            if(colors.size()>=n*3){
+                if(use_device_update[di]) cl.update_leds(dev,colors.data(),n);
+                else cl.update_zone_leds(dev,zone,colors.data(),n);
+                st.preview_r[di]=colors[0];st.preview_g[di]=colors[1];st.preview_b[di]=colors[2];
+            }
         }++frame;
     }cl.close();
 }
