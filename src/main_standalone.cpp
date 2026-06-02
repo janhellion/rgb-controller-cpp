@@ -219,11 +219,17 @@ public:
         auto* devTab=new QWidget();
         auto* devLo=new QVBoxLayout(devTab);devLo->setSpacing(8);devLo->setContentsMargins(4,4,4,4);
 
+        // ── Device panels (with direct apply, no combo handler reliance) ──
         m_pn[0]=new DevicePanel("Cooler (ASUS AURA, 7 LEDs)",this);
         m_pn[1]=new DevicePanel("Mouse (Logitech G203, 3 LEDs)",this);
         for(int di=0;di<2;++di){
-            connect(m_pn[di]->effect,QOverload<int>::of(&QComboBox::currentIndexChanged),[this,di](int i){apply([&]{m_st.effect_idx[di]=i;});});
-            connect(m_pn[di]->palette,QOverload<int>::of(&QComboBox::currentIndexChanged),[this,di](int i){apply([&]{m_st.palette_idx[di]=i;});m_pn[di]->swatch->setPalette(PALETTES[i].center,PALETTES[i].span);});
+            connect(m_pn[di]->effect,QOverload<int>::of(&QComboBox::currentIndexChanged),
+                [this,di](int i){ apply([this,di,i]{ m_st.effect_idx[di]=i; }); });
+            connect(m_pn[di]->palette,QOverload<int>::of(&QComboBox::currentIndexChanged),
+                [this,di](int i){
+                    apply([this,di,i]{ m_st.palette_idx[di]=i; });
+                    m_pn[di]->swatch->setPalette(PALETTES[i].center,PALETTES[i].span);
+                });
             devLo->addWidget(m_pn[di]);
         }
 
@@ -244,24 +250,22 @@ public:
         devLo->addStretch();
         m_tabs->addTab(devTab,"🖥 Devices");
 
-        // Tab 2: Palettes
+        // Tab 2: Palettes (no scroll area — direct layout)
         auto* palTab=new QWidget();
         auto* palLo=new QVBoxLayout(palTab);palLo->setSpacing(4);palLo->setContentsMargins(4,4,4,4);
         auto* palLbl=new QLabel("Click a palette to apply to both devices:");palLbl->setStyleSheet("color:#89b4fa;font-weight:bold;padding:4px 0");palLo->addWidget(palLbl);
-        auto* pscroll=new QScrollArea(this);pscroll->setFrameShape(QFrame::NoFrame);pscroll->setWidgetResizable(true);
-        auto* pw=new QWidget();auto* pwlo=new QVBoxLayout(pw);pwlo->setSpacing(2);
         for(int i=0;i<PALETTE_COUNT;++i){
-            auto* sw=new PaletteSwatch(pw);sw->setPalette(PALETTES[i].center,PALETTES[i].span);
-            auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name).arg(PALETTES[i].desc),pw);info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
-            connect(sw,&PaletteSwatch::clicked,[this,i](){
-                fprintf(stderr,"swatch clicked: %d (%s)\n",i,PALETTES[i].name);
-                m_pn[0]->palette->setCurrentIndex(i);
-                m_pn[1]->palette->setCurrentIndex(i);
-                apply([&]{ m_st.palette_idx[0]=i; m_st.palette_idx[1]=i; });
+            auto* sw=new PaletteSwatch(palTab);sw->setPalette(PALETTES[i].center,PALETTES[i].span);
+            auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name).arg(PALETTES[i].desc),palTab);info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
+            int idx=i; // capture by copy explicitly
+            connect(sw,&PaletteSwatch::clicked,[this,idx](){
+                m_pn[0]->palette->setCurrentIndex(idx);
+                m_pn[1]->palette->setCurrentIndex(idx);
+                apply([this,idx]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
             });
-            pwlo->addWidget(sw);pwlo->addWidget(info);
-        }pwlo->addStretch();
-        pscroll->setWidget(pw);palLo->addWidget(pscroll);
+            palLo->addWidget(sw);palLo->addWidget(info);
+        }
+        palLo->addStretch();
         m_tabs->addTab(palTab,"🎨 Palettes");
         lo->addWidget(m_tabs,1);
 
@@ -293,7 +297,11 @@ public:
         m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center,PALETTES[m_pn[0]->palette->currentIndex()].span);
         m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center,PALETTES[m_pn[1]->palette->currentIndex()].span);
         // Force apply in case combo already at this index (no signal for unchanged value)
-        apply([&]{m_st.effect_idx[0]=m_pn[0]->effect->currentIndex();m_st.effect_idx[1]=m_pn[1]->effect->currentIndex();m_st.palette_idx[0]=m_pn[0]->palette->currentIndex();m_st.palette_idx[1]=m_pn[1]->palette->currentIndex();});
+        {
+            int e0=m_pn[0]->effect->currentIndex(), e1=m_pn[1]->effect->currentIndex();
+            int p0=m_pn[0]->palette->currentIndex(), p1=m_pn[1]->palette->currentIndex();
+            apply([this,e0,e1,p0,p1]{m_st.effect_idx[0]=e0;m_st.effect_idx[1]=e1;m_st.palette_idx[0]=p0;m_st.palette_idx[1]=p1;});
+        }
 
         m_st.running=true;m_thread=std::thread(render_loop,std::ref(m_st));
     }
