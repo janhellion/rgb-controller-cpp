@@ -289,10 +289,24 @@ public:
             auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name,PALETTES[i].desc),palTab);
             info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
             int idx=i;
-            connect(sw,&PaletteSwatch::clicked,[this,idx](){
-                m_pn[0]->palette->setCurrentIndex(idx);
-                m_pn[1]->palette->setCurrentIndex(idx);
-                apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
+            connect(sw,&PaletteSwatch::clicked,[this,idx,sw](){
+                auto* menu=new QMenu(this);
+                menu->setStyleSheet("QMenu{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px}QMenu::item{padding:6px 24px;border-radius:3px}QMenu::item:selected{background:#45475a}");
+                menu->addAction("❄ Apply to Cooler",[this,idx](){
+                    m_pn[0]->palette->setCurrentIndex(idx);
+                    apply([=]{ m_st.palette_idx[0]=idx; });
+                });
+                menu->addAction("🖱 Apply to Mouse",[this,idx](){
+                    m_pn[1]->palette->setCurrentIndex(idx);
+                    apply([=]{ m_st.palette_idx[1]=idx; });
+                });
+                menu->addSeparator();
+                menu->addAction("Apply to Both",[this,idx](){
+                    m_pn[0]->palette->setCurrentIndex(idx);
+                    m_pn[1]->palette->setCurrentIndex(idx);
+                    apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
+                });
+                menu->popup(sw->mapToGlobal(QPoint(0,sw->height())));
             });
             palLo->addWidget(sw); palLo->addWidget(info);
         }
