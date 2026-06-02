@@ -53,7 +53,7 @@ if(BUILD_KCM)
 
     set_target_properties(rgb_controller_kcm PROPERTIES AUTOMOC ON PREFIX "")
 
-    install(TARGETS rgb_controller_kcm DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/qt6/plugins/plasma/kcms)
+    install(TARGETS rgb_controller_kcm DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/qt6/plugins/plasma/kcms/systemsettings)
     install(FILES kcm_rgbcontroller.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6)
     install(FILES kcm_rgbcontroller.json DESTINATION ${CMAKE_INSTALL_PREFIX}/share/kservices6)
 endif()

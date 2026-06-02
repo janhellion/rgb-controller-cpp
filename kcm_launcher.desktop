@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+NoDisplay=true
+X-KDE-AliasFor=systemsettings
+Exec=kcmshell6 rgb_controller_kcm
+Icon=preferences-desktop-color
+Name=RGB Controller
+Comment=Control system RGB lighting effects
