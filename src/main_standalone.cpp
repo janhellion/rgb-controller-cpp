@@ -23,6 +23,7 @@
 #include <QCloseEvent>
 #include <QMouseEvent>
 #include <QTabWidget>
+#include <QDialog>
 
 #include <thread>
 #include <atomic>
@@ -107,6 +108,7 @@ struct SharedState {
     std::mutex mtx;
     int effect_idx[2]={0,0}, palette_idx[2]={0,0};
     float speed=0.15f, intensity=1.0f, breath_depth=0.15f;
+    float custom_hue=200, custom_span=25;  // for custom palette
     int preview_r[2]={}, preview_g[2]={}, preview_b[2]={};
     std::mutex cv_mtx; std::condition_variable cv;
 };
@@ -149,8 +151,9 @@ static void render_loop(SharedState& st){
                   float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));
                   ch=240.f*(1.f-r); hs=25.f;
               } else {
-                  ch=PALETTES[st.palette_idx[di]].center;
-                  hs=PALETTES[st.palette_idx[di]].span;
+                  int pi=st.palette_idx[di];
+                  if(pi<0){ ch=st.custom_hue; hs=st.custom_span; }
+                  else{ ch=PALETTES[pi].center; hs=PALETTES[pi].span; }
               }
             }
 
@@ -256,11 +259,15 @@ public:
         m_pn[1]=new DevicePanel("Mouse (Logitech G203, 3 LEDs)",this);
         for(int di=0;di<2;++di){
             connect(m_pn[di]->effect, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                [this,di](int i){ apply([=]{ m_st.effect_idx[di]=i; }); });
+                [this,di](int i){
+                    if(i>=0 && i<rgb::effect::EFFECT_COUNT) apply([=]{ m_st.effect_idx[di]=i; });
+                });
             connect(m_pn[di]->palette, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
-                    apply([=]{ m_st.palette_idx[di]=i; }, true);
-                    m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
+                    if(i>=0 && i<N_PALETTES){
+                        apply([=]{ m_st.palette_idx[di]=i; }, true);
+                        m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
+                    }
                 });
             devLo->addWidget(m_pn[di]);
         }
@@ -311,6 +318,40 @@ public:
                     m_pn[0]->palette->setCurrentIndex(idx);
                     m_pn[1]->palette->setCurrentIndex(idx);
                     apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; }, true);
+                });
+                menu->addSeparator();
+                menu->addAction("🎨 Custom...",[this](){
+                    auto* dlg=new QDialog(this);
+                    dlg->setWindowTitle("Custom Palette");dlg->setFixedSize(300,150);
+                    dlg->setStyleSheet("QDialog{background:#1e1e2e}QLabel{color:#cdd6f4}");
+                    auto* dl=new QVBoxLayout(dlg);
+                    auto* hl=new QHBoxLayout();
+                    auto* hueSl=new QSlider(Qt::Horizontal);hueSl->setRange(0,360);hueSl->setValue(200);
+                    auto* hueLb=new QLabel("Hue: 200°");hueLb->setStyleSheet("color:#89b4fa;min-width:70px");
+                    connect(hueSl,&QSlider::valueChanged,[hueLb](int v){hueLb->setText(QString("Hue: %1°").arg(v));});
+                    hl->addWidget(hueLb);hl->addWidget(hueSl);
+                    dl->addLayout(hl);
+                    auto* sl=new QHBoxLayout();
+                    auto* spanSl=new QSlider(Qt::Horizontal);spanSl->setRange(5,60);spanSl->setValue(25);
+                    auto* spanLb=new QLabel("Span: 25°");spanLb->setStyleSheet("color:#89b4fa;min-width:70px");
+                    connect(spanSl,&QSlider::valueChanged,[spanLb](int v){spanLb->setText(QString("Span: %1°").arg(v));});
+                    sl->addWidget(spanLb);sl->addWidget(spanSl);
+                    dl->addLayout(sl);
+                    auto* swPrev=new PaletteSwatch(dlg);swPrev->setPalette(200,25);
+                    connect(hueSl,&QSlider::valueChanged,[swPrev,spanSl](int h){swPrev->setPalette((float)h,(float)spanSl->value());});
+                    connect(spanSl,&QSlider::valueChanged,[swPrev,hueSl](int s){swPrev->setPalette((float)hueSl->value(),(float)s);});
+                    dl->addWidget(swPrev);
+                    auto* applyBtn=new QPushButton("Apply to Both");
+                    applyBtn->setStyleSheet("QPushButton{background:#89b4fa;color:#1e1e2e;font-weight:bold;border-radius:6px;padding:8px}");
+                    connect(applyBtn,&QPushButton::clicked,[this,dlg,hueSl,spanSl](){
+                        float ch=(float)hueSl->value(), hs=(float)spanSl->value();
+                        apply([=]{ m_st.palette_idx[0]=-1; m_st.palette_idx[1]=-1;
+                                    m_st.custom_hue=ch; m_st.custom_span=hs; }, true);
+                        dlg->accept();
+                    });
+                    dl->addWidget(applyBtn);
+                    dlg->exec();
+                    dlg->deleteLater();
                 });
                 menu->popup(sw->mapToGlobal(QPoint(0,sw->height())));
             });
