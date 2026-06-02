@@ -185,6 +185,7 @@ public:
         g->addWidget(new QLabel("Palette:",this),1,0);
         palette=new QComboBox(this);
         for(int i=0;i<N_PALETTES;++i) palette->addItem(PALETTES[i].name);
+        palette->addItem("Custom");  // last entry = N_PALETTES
         g->addWidget(palette,1,1);
         swatch=new PaletteSwatch(this); g->addWidget(swatch,2,0,1,2);
         status=new QLabel(this); status->setStyleSheet("color:#a6e3a1;font-size:11px"); g->addWidget(status,3,0,1,2);
@@ -264,6 +265,11 @@ public:
                 });
             connect(m_pn[di]->palette, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
+                    if(i==N_PALETTES){
+                        // User selected "Custom" from combo → stay on previous palette
+                        // (Custom is only meaningful when set via Palettes tab)
+                        return;
+                    }
                     if(i>=0 && i<N_PALETTES){
                         apply([=]{ m_st.palette_idx[di]=i; }, true);
                         m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
@@ -306,17 +312,17 @@ public:
                 auto* menu=new QMenu(this);
                 menu->setStyleSheet("QMenu{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px}QMenu::item{padding:6px 24px;border-radius:3px}QMenu::item:selected{background:#45475a}");
                 menu->addAction("❄ Apply to Cooler",[this,idx](){
-                    m_pn[0]->palette->setCurrentIndex(idx);
+                    m_pn[0]->palette->setCurrentIndex(N_PALETTES);  // show Custom
                     apply([=]{ m_st.palette_idx[0]=idx; }, true);
                 });
                 menu->addAction("🖱 Apply to Mouse",[this,idx](){
-                    m_pn[1]->palette->setCurrentIndex(idx);
+                    m_pn[1]->palette->setCurrentIndex(N_PALETTES);
                     apply([=]{ m_st.palette_idx[1]=idx; }, true);
                 });
                 menu->addSeparator();
                 menu->addAction("Apply to Both",[this,idx](){
-                    m_pn[0]->palette->setCurrentIndex(idx);
-                    m_pn[1]->palette->setCurrentIndex(idx);
+                    m_pn[0]->palette->setCurrentIndex(N_PALETTES);
+                    m_pn[1]->palette->setCurrentIndex(N_PALETTES);
                     apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; }, true);
                 });
                 menu->addSeparator();
@@ -348,6 +354,8 @@ public:
                     auto* applyBtn=new QPushButton("Apply to Both");applyBtn->setStyleSheet("QPushButton{background:#89b4fa;color:#1e1e2e;font-weight:bold;border-radius:6px;padding:6px 16px}");
                     connect(applyBtn,&QPushButton::clicked,[this,dlg,hueSl,spanSl](){
                         float ch=(float)hueSl->value(), hs=(float)spanSl->value();
+                        m_pn[0]->palette->setCurrentIndex(N_PALETTES);
+                        m_pn[1]->palette->setCurrentIndex(N_PALETTES);
                         apply([=]{ m_st.palette_idx[0]=-1; m_st.palette_idx[1]=-1;
                                     m_st.custom_hue=ch; m_st.custom_span=hs; }, true);
                         dlg->accept();
