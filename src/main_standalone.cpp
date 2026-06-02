@@ -24,6 +24,7 @@
 #include <QMouseEvent>
 #include <QTabWidget>
 #include <QDialog>
+#include <QMessageBox>
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -340,6 +341,17 @@ public:
         m_pwr_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:11px;border-radius:4px;padding:2px 10px}QPushButton:checked{background:#a6e3a1;color:#1e1e2e;font-weight:bold}");
         connect(m_pwr_btn,&QPushButton::toggled,[this](bool v){m_st.power_save=v;if(!v)m_st.power_save_active=false;updatePowerSaveLabel();});
         ctrlRow->addWidget(m_on_btn); ctrlRow->addWidget(m_tmp_btn); ctrlRow->addWidget(m_pwr_btn);
+        // Info button for Power Save explanation
+        auto* pwrInfo=new QPushButton("ⓘ"); pwrInfo->setFixedSize(20,20);
+        pwrInfo->setStyleSheet("QPushButton{background:transparent;color:#6c7086;font-size:11px;border:none;padding:0}QPushButton:hover{color:#89b4fa;}");
+        connect(pwrInfo,&QPushButton::clicked,[this](){
+            QMessageBox::information(nullptr, "Power Save",
+                "When enabled, RGB LEDs dim to 8% brightness to save power:\n"
+                "  🌙 Night  — between sunset and sunrise (CDMX)\n"
+                "  💤 Idle   — no keyboard/mouse activity for 10 min\n\n"
+                "LEDs return to normal brightness automatically when\n"
+                "you're active again or the sun rises.");
+        });
         m_pwr_status=new QLabel(""); m_pwr_status->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
         ctrlRow->addWidget(m_pwr_status); ctrlRow->addStretch();
         hdr->addLayout(ctrlRow); lo->addLayout(hdr);
