@@ -410,34 +410,49 @@ public:
             m_pv[0]->setColor(m_st.preview_r[0],m_st.preview_g[0],m_st.preview_b[0]);
             m_pv[1]->setColor(m_st.preview_r[1],m_st.preview_g[1],m_st.preview_b[1]);
             std::lock_guard<std::mutex> lk(m_st.mtx);
-            m_pn[0]->status->setText(QString("Live · %1 · %2")
-                .arg(rgb::effect::EFFECTS[m_st.effect_idx[0]].name, PALETTES[m_st.palette_idx[0]].name));
-            m_pn[1]->status->setText(QString("Live · %1 · %2")
-                .arg(rgb::effect::EFFECTS[m_st.effect_idx[1]].name, PALETTES[m_st.palette_idx[1]].name));
+            for(int di=0;di<2;++di){
+                int pi=m_st.palette_idx[di];
+                QString palName=(pi<0)?"Custom":PALETTES[pi].name;
+                m_pn[di]->status->setText(QString("Live · %1 · %2")
+                    .arg(rgb::effect::EFFECTS[m_st.effect_idx[di]].name, palName));
+                // Keep swatch in sync with actual palette
+                if(pi<0) m_pn[di]->swatch->setPalette(m_st.custom_hue, m_st.custom_span);
+                else m_pn[di]->swatch->setPalette(PALETTES[pi].center, PALETTES[pi].span);
+            }
         }); m_ui_timer->start(200);
 
         // Restore + force apply
         QSettings s("rgb-controller","rgb-controller");
         m_pn[0]->effect->setCurrentIndex(s.value("cooler_effect",0).toInt());
-        m_pn[0]->palette->setCurrentIndex(s.value("cooler_palette",0).toInt());
+        m_pn[0]->palette->setCurrentIndex(std::min(s.value("cooler_palette",0).toInt(), N_PALETTES-1));
         m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());
-        m_pn[1]->palette->setCurrentIndex(s.value("mouse_palette",0).toInt());
-        m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center, PALETTES[m_pn[0]->palette->currentIndex()].span);
-        m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center, PALETTES[m_pn[1]->palette->currentIndex()].span);
+        m_pn[1]->palette->setCurrentIndex(std::min(s.value("mouse_palette",0).toInt(), N_PALETTES-1));
+        // Swatch from actual palette (clamp Custom→0 for display)
+        for(int di=0;di<2;++di){
+            int ci=m_pn[di]->palette->currentIndex();
+            if(ci>=N_PALETTES||ci<0)ci=0;
+            m_pn[di]->swatch->setPalette(PALETTES[ci].center,PALETTES[ci].span);
+        }
 
         int e0=m_pn[0]->effect->currentIndex(), e1=m_pn[1]->effect->currentIndex();
         int p0=m_pn[0]->palette->currentIndex(), p1=m_pn[1]->palette->currentIndex();
+        if(p0>=N_PALETTES)p0=0; if(p1>=N_PALETTES)p1=0;
         apply([=]{ m_st.effect_idx[0]=e0; m_st.effect_idx[1]=e1; m_st.palette_idx[0]=p0; m_st.palette_idx[1]=p1; });
 
         m_st.running=true; m_thread=std::thread(render_loop,std::ref(m_st));
+        // Restore custom palette values
+        m_st.custom_hue=s.value("custom_hue",200).toFloat();
+        m_st.custom_span=s.value("custom_span",25).toFloat();
     }
 
     ~MainWindow() override {
         QSettings s("rgb-controller","rgb-controller");
         s.setValue("cooler_effect",m_pn[0]->effect->currentIndex());
-        s.setValue("cooler_palette",m_pn[0]->palette->currentIndex());
+        s.setValue("cooler_palette",std::min(m_pn[0]->palette->currentIndex(),N_PALETTES-1));
         s.setValue("mouse_effect",m_pn[1]->effect->currentIndex());
-        s.setValue("mouse_palette",m_pn[1]->palette->currentIndex());
+        s.setValue("mouse_palette",std::min(m_pn[1]->palette->currentIndex(),N_PALETTES-1));
+        s.setValue("custom_hue",m_st.custom_hue);
+        s.setValue("custom_span",m_st.custom_span);
         m_st.running=false; m_st.cv.notify_all();
         if(m_thread.joinable()) m_thread.join();
     }
