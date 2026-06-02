@@ -1,6 +1,5 @@
 // ─────────────────────────────────────────────────────────
-//  RGB Controller — Standalone Qt6 application
-//  orgb_client.h backend, std::thread render loop
+//  RGB Controller — Standalone Qt6 + std::thread
 //  Tabbed UI: Devices | Palettes
 // ─────────────────────────────────────────────────────────
 #include <QApplication>
@@ -22,7 +21,6 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QCloseEvent>
-#include <QScrollArea>
 #include <QMouseEvent>
 #include <QTabWidget>
 
@@ -30,7 +28,6 @@
 #include <atomic>
 #include <mutex>
 #include <fstream>
-#include <sstream>
 #include <chrono>
 #include <condition_variable>
 
@@ -41,7 +38,7 @@
 using namespace std::chrono_literals;
 
 // ── Palettes ──
-struct Palette { const char* name; const char* desc; float center; float span; };
+struct Palette { const char* name, *desc; float center, span; };
 static const Palette PALETTES[] = {
     {"Ocean",   "Deep blues to turquoise",       200,30},
     {"Forest",  "Emerald green to lime",         120,25},
@@ -59,14 +56,14 @@ static const Palette PALETTES[] = {
     {"Arctic",  "Ice blue to cyan frost",        195,40},
     {"Candy",   "Bubblegum pink to grape",        320,35},
 };
-static constexpr int PALETTE_COUNT = sizeof(PALETTES)/sizeof(PALETTES[0]);
+static constexpr int N_PALETTES = sizeof(PALETTES)/sizeof(PALETTES[0]);
 
-// ── Fast temp read ──
-static float read_sysfs_val(const char* path) { std::ifstream f(path); int v=-1; f>>v; return v>0?v/1000.f:-1; }
-static float cpu_temp() { for(int i=0;i<8;++i){char b[128];snprintf(b,sizeof(b),"/sys/class/hwmon/hwmon%d/temp1_input",i);float t=read_sysfs_val(b);if(t>0)return t;} return -1; }
-static float gpu_temp() { return read_sysfs_val("/sys/class/hwmon/hwmon2/temp1_input"); }
+// ── Temp sensors ──
+static float read_sysfs(const char* p){ std::ifstream f(p); int v=-1; f>>v; return v>0?v/1000.f:-1; }
+static float cpu_temp(){ for(int i=0;i<8;++i){char b[128];snprintf(b,sizeof(b),"/sys/class/hwmon/hwmon%d/temp1_input",i);float t=read_sysfs(b);if(t>0)return t;} return -1; }
+static float gpu_temp(){ return read_sysfs("/sys/class/hwmon/hwmon2/temp1_input"); }
 
-// ── Color Preview ──
+// ── Color preview circle ──
 class ColorPreview : public QWidget {
     Q_OBJECT
     int m_r=0,m_g=0,m_b=0; QString m_label;
@@ -83,7 +80,7 @@ protected:
     }
 };
 
-// ── Clickable Palette Swatch ──
+// ── Clickable gradient swatch ──
 class PaletteSwatch : public QWidget {
     Q_OBJECT
     float m_center=200,m_span=30; bool m_hovered=false;
@@ -103,7 +100,7 @@ protected:
     void mousePressEvent(QMouseEvent*)override{emit clicked();}
 };
 
-// ── Shared State ──
+// ── Thread-safe shared state ──
 struct SharedState {
     std::atomic<bool> running{false}, enabled{true}, temp_mode{false}, wake{false};
     std::mutex mtx;
@@ -113,68 +110,96 @@ struct SharedState {
     std::mutex cv_mtx; std::condition_variable cv;
 };
 
-// ── Render Thread ──
+// ── Render thread ──
 static void render_loop(SharedState& st){
-    orgb_client::Client cl; if(!cl.connect()){st.running=false;return;}
-    cl.resize_zone(0, 1, 7);  // cooler ARGB — needs resize
-    // Mouse: don't resize — Logitech G203 may not support it
+    orgb_client::Client cl;
+    if(!cl.connect()){st.running=false;return;}
+
+    cl.resize_zone(0, 1, 7);  // cooler ARGB
     std::this_thread::sleep_for(200ms);
 
     const uint32_t ZONES[2][3] = {{0,1,7},{1,0,3}};
-    // Mouse uses device-level update_leds (1050), cooler uses zone-level (1051)
-    const bool use_device_update[2] = {false, true};
-    auto t0=std::chrono::steady_clock::now();int frame=0;std::vector<uint8_t> colors;
+    const bool use_device_update[2] = {false, true};  // cooler=zone, mouse=device
+    auto t0=std::chrono::steady_clock::now();
+    int frame=0;
+    std::vector<uint8_t> colors;
+
     while(st.running){
         if(!st.enabled){std::this_thread::sleep_for(200ms);continue;}
-        {std::unique_lock<std::mutex> lk(st.cv_mtx);st.cv.wait_for(lk,50ms,[&]{return !st.running||st.wake.load();});st.wake=false;}
-        if(!st.running)break;
-        auto now=std::chrono::steady_clock::now();float t=std::chrono::duration<float>(now-t0).count();
-        float ct=-1,gt=-1;if(st.temp_mode&&frame%30==0){ct=cpu_temp();gt=gpu_temp();}
+
+        { std::unique_lock<std::mutex> lk(st.cv_mtx);
+          st.cv.wait_for(lk, 50ms, [&]{return !st.running||st.wake.load();});
+          st.wake=false; }
+        if(!st.running) break;
+
+        auto now=std::chrono::steady_clock::now();
+        float t=std::chrono::duration<float>(now-t0).count();
+        float ct=-1, gt=-1;
+        if(st.temp_mode && frame%30==0){ct=cpu_temp();gt=gpu_temp();}
+
         for(int di=0;di<2;++di){
-            uint32_t dev=ZONES[di][0],zone=ZONES[di][1],n=ZONES[di][2];
-            float ch,hs,spd,it,bd;int ei;
-            {std::lock_guard<std::mutex> lk(st.mtx);spd=st.speed;it=st.intensity;bd=st.breath_depth;ei=st.effect_idx[di];
-             if(st.temp_mode){float mx=std::max(ct,gt);if(mx<0)mx=40;float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));ch=240.f*(1.f-r);hs=25.f;}
-             else{ch=PALETTES[st.palette_idx[di]].center;hs=PALETTES[st.palette_idx[di]].span;}}
-            if(ei>=0&&ei<rgb::effect::EFFECT_COUNT)rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
+            uint32_t dev=ZONES[di][0], zone=ZONES[di][1], n=ZONES[di][2];
+            float ch,hs,spd,it,bd; int ei;
+            { std::lock_guard<std::mutex> lk(st.mtx);
+              spd=st.speed; it=st.intensity; bd=st.breath_depth; ei=st.effect_idx[di];
+              if(st.temp_mode){
+                  float mx=std::max(ct,gt); if(mx<0)mx=40;
+                  float r=std::max(0.f,std::min(1.f,(mx-30.f)/55.f));
+                  ch=240.f*(1.f-r); hs=25.f;
+              } else {
+                  ch=PALETTES[st.palette_idx[di]].center;
+                  hs=PALETTES[st.palette_idx[di]].span;
+              }
+            }
+
+            if(ei>=0 && ei<rgb::effect::EFFECT_COUNT)
+                rgb::effect::EFFECTS[ei].fn(t,n,colors,ch,hs,spd,it,bd,1.f);
+
             if(colors.size()>=n*3){
                 if(use_device_update[di]) cl.update_leds(dev,colors.data(),n);
-                else cl.update_zone_leds(dev,zone,colors.data(),n);
-                st.preview_r[di]=colors[0];st.preview_g[di]=colors[1];st.preview_b[di]=colors[2];
+                else                      cl.update_zone_leds(dev,zone,colors.data(),n);
+                st.preview_r[di]=colors[0]; st.preview_g[di]=colors[1]; st.preview_b[di]=colors[2];
             }
-        }++frame;
-    }cl.close();
+        }
+        ++frame;
+    }
+    cl.disconnect();
 }
 
-// ── Device Panel ──
+// ── Per-device control panel ──
 class DevicePanel : public QGroupBox {
     Q_OBJECT
 public:
-    QComboBox *effect,*palette; PaletteSwatch *swatch; QLabel *status;
-    DevicePanel(const QString& t,QWidget* p=nullptr):QGroupBox(t,p){
-        auto* g=new QGridLayout(this);g->setSpacing(6);
-        g->addWidget(new QLabel("Effect:",this),0,0);effect=new QComboBox(this);for(int i=0;i<rgb::effect::EFFECT_COUNT;++i)effect->addItem(rgb::effect::EFFECTS[i].name);g->addWidget(effect,0,1);
-        g->addWidget(new QLabel("Palette:",this),1,0);palette=new QComboBox(this);for(int i=0;i<PALETTE_COUNT;++i)palette->addItem(PALETTES[i].name);g->addWidget(palette,1,1);
-        swatch=new PaletteSwatch(this);g->addWidget(swatch,2,0,1,2);
-        status=new QLabel(this);status->setStyleSheet("color:#a6e3a1;font-size:11px");g->addWidget(status,3,0,1,2);
+    QComboBox *effect, *palette; PaletteSwatch *swatch; QLabel *status;
+    DevicePanel(const QString& t, QWidget* p=nullptr):QGroupBox(t,p){
+        auto* g=new QGridLayout(this); g->setSpacing(6);
+        g->addWidget(new QLabel("Effect:",this),0,0);
+        effect=new QComboBox(this);
+        for(int i=0;i<rgb::effect::EFFECT_COUNT;++i) effect->addItem(rgb::effect::EFFECTS[i].name);
+        g->addWidget(effect,0,1);
+        g->addWidget(new QLabel("Palette:",this),1,0);
+        palette=new QComboBox(this);
+        for(int i=0;i<N_PALETTES;++i) palette->addItem(PALETTES[i].name);
+        g->addWidget(palette,1,1);
+        swatch=new PaletteSwatch(this); g->addWidget(swatch,2,0,1,2);
+        status=new QLabel(this); status->setStyleSheet("color:#a6e3a1;font-size:11px"); g->addWidget(status,3,0,1,2);
     }
 };
 
-// ── Main Window ──
+// ── Main window ──
 class MainWindow : public QMainWindow {
     Q_OBJECT
     SharedState m_st; std::thread m_thread;
     ColorPreview *m_pv[2]; DevicePanel *m_pn[2];
-    QPushButton *m_on_btn,*m_tmp_btn; QLabel *m_temp_label;
-    QTimer *m_ui_timer; QSystemTrayIcon *m_tray=nullptr;
-    QTabWidget *m_tabs;
+    QPushButton *m_on_btn, *m_tmp_btn; QLabel *m_temp_label;
+    QTimer *m_ui_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
 
-    void wake(){m_st.wake=true;m_st.cv.notify_one();}
-    template<typename F> void apply(F s){std::lock_guard<std::mutex> lk(m_st.mtx);s();wake();}
+    void wake(){ m_st.wake=true; m_st.cv.notify_one(); }
+    template<typename F> void apply(F fn){ std::lock_guard<std::mutex> lk(m_st.mtx); fn(); wake(); }
 
 public:
     MainWindow(){
-        setWindowTitle("RGB Controller");setMinimumSize(500,520);
+        setWindowTitle("RGB Controller"); setMinimumSize(500,520);
         setStyleSheet(R"(
             QMainWindow,QWidget{background:#1e1e2e;color:#cdd6f4;font-size:13px}
             QGroupBox{border:1px solid #313244;border-radius:6px;margin-top:14px;font-weight:bold;color:#89b4fa;padding-top:8px}
@@ -183,145 +208,181 @@ public:
             QSlider::handle:horizontal{background:#89b4fa;width:16px;height:16px;margin:-5px 0;border-radius:8px}
             QSlider::sub-page:horizontal{background:#89b4fa;border-radius:3px}
             QPushButton{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:6px;padding:8px 16px;font-weight:bold}
-            QPushButton:hover{background:#45475a}QPushButton:checked{background:#a6e3a1;color:#1e1e2e}
+            QPushButton:hover{background:#45475a} QPushButton:checked{background:#a6e3a1;color:#1e1e2e}
             QComboBox{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:5px 8px}
-            QComboBox::drop-down{border:none}QComboBox QAbstractItemView{background:#313244;color:#cdd6f4;selection-background-color:#45475a}
+            QComboBox::drop-down{border:none} QComboBox QAbstractItemView{background:#313244;color:#cdd6f4;selection-background-color:#45475a}
             QLabel{color:#cdd6f4}
             QTabWidget::pane{border:1px solid #313244;border-radius:6px;background:#1e1e2e}
             QTabBar::tab{background:#313244;color:#6c7086;padding:8px 20px;border-top-left-radius:6px;border-top-right-radius:6px;margin-right:2px}
             QTabBar::tab:selected{background:#45475a;color:#89b4fa;font-weight:bold}
             QTabBar::tab:hover{background:#3a3d4f;color:#cdd6f4}
-            QScrollArea{background:transparent;border:none}
-            QScrollBar:vertical{background:#1e1e2e;width:8px;border-radius:4px}
-            QScrollBar::handle:vertical{background:#45475a;border-radius:4px;min-height:30px}
-            QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0}
         )");
 
-        auto* cw=new QWidget(this);setCentralWidget(cw);
-        auto* lo=new QVBoxLayout(cw);lo->setSpacing(0);lo->setContentsMargins(8,8,8,8);
+        auto* cw=new QWidget(this); setCentralWidget(cw);
+        auto* lo=new QVBoxLayout(cw); lo->setSpacing(0); lo->setContentsMargins(8,8,8,8);
 
-        // ── Header (always visible) ──
+        // Header
         auto* hdr=new QHBoxLayout();
-        m_pv[0]=new ColorPreview("Cooler",this);m_pv[1]=new ColorPreview("Mouse",this);
+        m_pv[0]=new ColorPreview("Cooler",this); m_pv[1]=new ColorPreview("Mouse",this);
         auto* hinfo=new QVBoxLayout();
-        auto* tl=new QLabel("RGB Controller");tl->setStyleSheet("font-size:18px;font-weight:bold;color:#89b4fa");
-        m_temp_label=new QLabel("");m_temp_label->setStyleSheet("color:#f9e2af;font-size:12px");
-        hinfo->addWidget(tl);hinfo->addWidget(m_temp_label);
-        hdr->addWidget(m_pv[0]);hdr->addWidget(m_pv[1]);hdr->addLayout(hinfo,1);
+        auto* tl=new QLabel("RGB Controller"); tl->setStyleSheet("font-size:18px;font-weight:bold;color:#89b4fa");
+        m_temp_label=new QLabel; m_temp_label->setStyleSheet("color:#f9e2af;font-size:12px");
+        hinfo->addWidget(tl); hinfo->addWidget(m_temp_label);
+        hdr->addWidget(m_pv[0]); hdr->addWidget(m_pv[1]); hdr->addLayout(hinfo,1);
 
-        // Toggles in header
         auto* tgls=new QVBoxLayout();
-        m_on_btn=new QPushButton("System ON");m_on_btn->setCheckable(true);m_on_btn->setChecked(true);
+        m_on_btn=new QPushButton("System ON"); m_on_btn->setCheckable(true); m_on_btn->setChecked(true);
         m_on_btn->setStyleSheet("QPushButton{background:#a6e3a1;color:#1e1e2e;font-size:12px;border-radius:6px;padding:4px 12px;font-weight:bold}QPushButton:!checked{background:#45475a;color:#6c7086}");
         connect(m_on_btn,&QPushButton::toggled,[this](bool v){m_st.enabled=v;m_on_btn->setText(v?"System ON":"System OFF");});
-        m_tmp_btn=new QPushButton("Temp: OFF");m_tmp_btn->setCheckable(true);
+        m_tmp_btn=new QPushButton("Temp: OFF"); m_tmp_btn->setCheckable(true);
         m_tmp_btn->setStyleSheet("QPushButton{background:#313244;color:#cdd6f4;font-size:12px;border-radius:6px;padding:4px 12px}QPushButton:checked{background:#fab387;color:#1e1e2e;font-weight:bold}");
         connect(m_tmp_btn,&QPushButton::toggled,[this](bool v){m_st.temp_mode=v;m_tmp_btn->setText(v?"Temp: ON":"Temp: OFF");});
-        tgls->addWidget(m_on_btn);tgls->addWidget(m_tmp_btn);
-        hdr->addLayout(tgls);
-        lo->addLayout(hdr);
+        tgls->addWidget(m_on_btn); tgls->addWidget(m_tmp_btn);
+        hdr->addLayout(tgls); lo->addLayout(hdr);
 
-        // ── Tabs ──
+        // Tabs
         m_tabs=new QTabWidget(this);
 
-        // Tab 1: Devices
-        auto* devTab=new QWidget();
-        auto* devLo=new QVBoxLayout(devTab);devLo->setSpacing(8);devLo->setContentsMargins(4,4,4,4);
+        // ── Devices tab ──
+        auto* devTab=new QWidget; auto* devLo=new QVBoxLayout(devTab); devLo->setSpacing(8); devLo->setContentsMargins(4,4,4,4);
 
-        // ── Device panels (with direct apply, no combo handler reliance) ──
         m_pn[0]=new DevicePanel("Cooler (ASUS AURA, 7 LEDs)",this);
         m_pn[1]=new DevicePanel("Mouse (Logitech G203, 3 LEDs)",this);
         for(int di=0;di<2;++di){
-            connect(m_pn[di]->effect,QOverload<int>::of(&QComboBox::currentIndexChanged),
-                [this,di](int i){ apply([this,di,i]{ m_st.effect_idx[di]=i; }); });
-            connect(m_pn[di]->palette,QOverload<int>::of(&QComboBox::currentIndexChanged),
+            connect(m_pn[di]->effect, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                [this,di](int i){ apply([=]{ m_st.effect_idx[di]=i; }); });
+            connect(m_pn[di]->palette, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
-                    apply([this,di,i]{ m_st.palette_idx[di]=i; });
-                    m_pn[di]->swatch->setPalette(PALETTES[i].center,PALETTES[i].span);
+                    apply([=]{ m_st.palette_idx[di]=i; });
+                    m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
                 });
             devLo->addWidget(m_pn[di]);
         }
 
-        // Sliders in Devices tab
-        auto* sg=new QGroupBox("Speed & Brightness",this);
-        auto* sglo=new QGridLayout(sg);
-        auto addSlider=[&](const char* label,int lo,int hi,int def,std::function<QString(int)> fmt,std::function<void(int)> cb){
-            int r=sglo->rowCount();sglo->addWidget(new QLabel(label,this),r,0);
-            auto* sl=new QSlider(Qt::Horizontal,this);sl->setRange(lo,hi);sl->setValue(def);
+        // Sliders
+        auto* sg=new QGroupBox("Speed & Brightness",this); auto* sglo=new QGridLayout(sg);
+        auto addSlider=[&](const char* label,int lo,int hi,int def,
+                            std::function<QString(int)> fmt,
+                            std::function<void(int)> cb){
+            int r=sglo->rowCount(); sglo->addWidget(new QLabel(label,this),r,0);
+            auto* sl=new QSlider(Qt::Horizontal,this); sl->setRange(lo,hi); sl->setValue(def);
             auto* lb=new QLabel(fmt(def),this);
             connect(sl,&QSlider::valueChanged,[lb,fmt,cb](int v){lb->setText(fmt(v));cb(v);});
-            sglo->addWidget(sl,r,1);sglo->addWidget(lb,r,2);
+            sglo->addWidget(sl,r,1); sglo->addWidget(lb,r,2);
         };
-        addSlider("Speed:",1,50,15,[](int v){return QString("%1x").arg(v/100.,0,'f',2);},[this](int v){apply([&]{m_st.speed=v/100.f;});});
-        addSlider("Brightness:",20,100,100,[](int v){return QString("%1%").arg(v);},[this](int v){apply([&]{m_st.intensity=v/100.f;});});
-        addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},[this](int v){apply([&]{m_st.breath_depth=v/100.f;});});
-        devLo->addWidget(sg);
-        devLo->addStretch();
+        addSlider("Speed:",1,50,15,[](int v){return QString("%1x").arg(v/100.,0,'f',2);},
+            [this](int v){ apply([=]{ m_st.speed=v/100.f; }); });
+        addSlider("Brightness:",20,100,100,[](int v){return QString("%1%").arg(v);},
+            [this](int v){ apply([=]{ m_st.intensity=v/100.f; }); });
+        addSlider("Breath:",0,40,15,[](int v){return QString("%1%").arg(v);},
+            [this](int v){ apply([=]{ m_st.breath_depth=v/100.f; }); });
+        devLo->addWidget(sg); devLo->addStretch();
         m_tabs->addTab(devTab,"🖥 Devices");
 
-        // Tab 2: Palettes (no scroll area — direct layout)
-        auto* palTab=new QWidget();
-        auto* palLo=new QVBoxLayout(palTab);palLo->setSpacing(4);palLo->setContentsMargins(4,4,4,4);
-        auto* palLbl=new QLabel("Click a palette to apply to both devices:");palLbl->setStyleSheet("color:#89b4fa;font-weight:bold;padding:4px 0");palLo->addWidget(palLbl);
-        for(int i=0;i<PALETTE_COUNT;++i){
-            auto* sw=new PaletteSwatch(palTab);sw->setPalette(PALETTES[i].center,PALETTES[i].span);
-            auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name).arg(PALETTES[i].desc),palTab);info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
-            int idx=i; // capture by copy explicitly
+        // ── Palettes tab ──
+        auto* palTab=new QWidget; auto* palLo=new QVBoxLayout(palTab); palLo->setSpacing(4); palLo->setContentsMargins(4,4,4,4);
+        auto* plbl=new QLabel("Click a palette to apply to both devices:");
+        plbl->setStyleSheet("color:#89b4fa;font-weight:bold;padding:4px 0");
+        palLo->addWidget(plbl);
+        for(int i=0;i<N_PALETTES;++i){
+            auto* sw=new PaletteSwatch(palTab); sw->setPalette(PALETTES[i].center,PALETTES[i].span);
+            auto* info=new QLabel(QString("  %1 — %2").arg(PALETTES[i].name,PALETTES[i].desc),palTab);
+            info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
+            int idx=i;
             connect(sw,&PaletteSwatch::clicked,[this,idx](){
                 m_pn[0]->palette->setCurrentIndex(idx);
                 m_pn[1]->palette->setCurrentIndex(idx);
-                apply([this,idx]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
+                apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
             });
-            palLo->addWidget(sw);palLo->addWidget(info);
+            palLo->addWidget(sw); palLo->addWidget(info);
         }
         palLo->addStretch();
         m_tabs->addTab(palTab,"🎨 Palettes");
         lo->addWidget(m_tabs,1);
 
-        // ── Shortcuts ──
+        // Shortcuts
         new QShortcut(QKeySequence("Ctrl+Q"),this,qApp,&QApplication::quit);
         new QShortcut(QKeySequence("Ctrl+H"),this,[this]{hide();});
         new QShortcut(QKeySequence("Ctrl+1"),this,[this]{m_tabs->setCurrentIndex(0);});
         new QShortcut(QKeySequence("Ctrl+2"),this,[this]{m_tabs->setCurrentIndex(1);});
 
-        // ── Temp updater ──
+        // Temp display
         auto* tt=new QTimer(this);
-        connect(tt,&QTimer::timeout,[this](){if(!m_st.temp_mode){m_temp_label->setText("");return;}float c=cpu_temp(),g=gpu_temp();QString s;if(c>0)s+=QString("CPU:%1°C ").arg(c,0,'f',1);if(g>0)s+=QString("GPU:%1°C").arg(g,0,'f',1);m_temp_label->setText(s.isEmpty()?"Sensors N/A":s);});tt->start(2000);
+        connect(tt,&QTimer::timeout,[this](){
+            if(!m_st.temp_mode){m_temp_label->setText("");return;}
+            float c=cpu_temp(),g=gpu_temp(); QString s;
+            if(c>0)s+=QString("CPU:%1°C ").arg(c,0,'f',1);
+            if(g>0)s+=QString("GPU:%1°C").arg(g,0,'f',1);
+            m_temp_label->setText(s.isEmpty()?"Sensors N/A":s);
+        }); tt->start(2000);
 
-        // ── Tray ──
+        // Tray
         if(QSystemTrayIcon::isSystemTrayAvailable()){
-            m_tray=new QSystemTrayIcon(this);QPixmap pm(22,22);pm.fill(Qt::transparent);QPainter pp(&pm);pp.setRenderHint(QPainter::Antialiasing);pp.setBrush(QColor(137,180,250));pp.setPen(Qt::NoPen);pp.drawEllipse(2,2,18,18);pp.end();m_tray->setIcon(QIcon(pm));m_tray->setToolTip("RGB Controller");
-            auto* mu=new QMenu();mu->addAction("Open Panel",[this]{show();raise();activateWindow();});mu->addSeparator();mu->addAction("Quit",qApp,&QApplication::quit);m_tray->setContextMenu(mu);
-            connect(m_tray,&QSystemTrayIcon::activated,[this](QSystemTrayIcon::ActivationReason r){if(r==QSystemTrayIcon::DoubleClick){show();raise();activateWindow();}});m_tray->show();
+            m_tray=new QSystemTrayIcon(this);
+            QPixmap pm(22,22); pm.fill(Qt::transparent);
+            QPainter pp(&pm); pp.setRenderHint(QPainter::Antialiasing);
+            pp.setBrush(QColor(137,180,250)); pp.setPen(Qt::NoPen); pp.drawEllipse(2,2,18,18); pp.end();
+            m_tray->setIcon(QIcon(pm)); m_tray->setToolTip("RGB Controller");
+            auto* mu=new QMenu; mu->addAction("Open Panel",[this]{show();raise();activateWindow();});
+            mu->addSeparator(); mu->addAction("Quit",qApp,&QApplication::quit);
+            m_tray->setContextMenu(mu);
+            connect(m_tray,&QSystemTrayIcon::activated,[this](QSystemTrayIcon::ActivationReason r){
+                if(r==QSystemTrayIcon::DoubleClick){show();raise();activateWindow();}
+            });
+            m_tray->show();
         }
 
-        // ── UI timer ──
+        // UI refresh
         m_ui_timer=new QTimer(this);
-        connect(m_ui_timer,&QTimer::timeout,[this](){m_pv[0]->setColor(m_st.preview_r[0],m_st.preview_g[0],m_st.preview_b[0]);m_pv[1]->setColor(m_st.preview_r[1],m_st.preview_g[1],m_st.preview_b[1]);std::lock_guard<std::mutex> lk(m_st.mtx);m_pn[0]->status->setText(QString("Live · %1 · %2").arg(rgb::effect::EFFECTS[m_st.effect_idx[0]].name).arg(PALETTES[m_st.palette_idx[0]].name));m_pn[1]->status->setText(QString("Live · %1 · %2").arg(rgb::effect::EFFECTS[m_st.effect_idx[1]].name).arg(PALETTES[m_st.palette_idx[1]].name));});m_ui_timer->start(200);
+        connect(m_ui_timer,&QTimer::timeout,[this](){
+            m_pv[0]->setColor(m_st.preview_r[0],m_st.preview_g[0],m_st.preview_b[0]);
+            m_pv[1]->setColor(m_st.preview_r[1],m_st.preview_g[1],m_st.preview_b[1]);
+            std::lock_guard<std::mutex> lk(m_st.mtx);
+            m_pn[0]->status->setText(QString("Live · %1 · %2")
+                .arg(rgb::effect::EFFECTS[m_st.effect_idx[0]].name, PALETTES[m_st.palette_idx[0]].name));
+            m_pn[1]->status->setText(QString("Live · %1 · %2")
+                .arg(rgb::effect::EFFECTS[m_st.effect_idx[1]].name, PALETTES[m_st.palette_idx[1]].name));
+        }); m_ui_timer->start(200);
 
-        // ── Restore settings + force initial apply ──
+        // Restore + force apply
         QSettings s("rgb-controller","rgb-controller");
-        m_pn[0]->effect->setCurrentIndex(s.value("cooler_effect",0).toInt());m_pn[0]->palette->setCurrentIndex(s.value("cooler_palette",0).toInt());
-        m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());m_pn[1]->palette->setCurrentIndex(s.value("mouse_palette",0).toInt());
-        m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center,PALETTES[m_pn[0]->palette->currentIndex()].span);
-        m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center,PALETTES[m_pn[1]->palette->currentIndex()].span);
-        // Force apply in case combo already at this index (no signal for unchanged value)
-        {
-            int e0=m_pn[0]->effect->currentIndex(), e1=m_pn[1]->effect->currentIndex();
-            int p0=m_pn[0]->palette->currentIndex(), p1=m_pn[1]->palette->currentIndex();
-            apply([this,e0,e1,p0,p1]{m_st.effect_idx[0]=e0;m_st.effect_idx[1]=e1;m_st.palette_idx[0]=p0;m_st.palette_idx[1]=p1;});
-        }
+        m_pn[0]->effect->setCurrentIndex(s.value("cooler_effect",0).toInt());
+        m_pn[0]->palette->setCurrentIndex(s.value("cooler_palette",0).toInt());
+        m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());
+        m_pn[1]->palette->setCurrentIndex(s.value("mouse_palette",0).toInt());
+        m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center, PALETTES[m_pn[0]->palette->currentIndex()].span);
+        m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center, PALETTES[m_pn[1]->palette->currentIndex()].span);
 
-        m_st.running=true;m_thread=std::thread(render_loop,std::ref(m_st));
+        int e0=m_pn[0]->effect->currentIndex(), e1=m_pn[1]->effect->currentIndex();
+        int p0=m_pn[0]->palette->currentIndex(), p1=m_pn[1]->palette->currentIndex();
+        apply([=]{ m_st.effect_idx[0]=e0; m_st.effect_idx[1]=e1; m_st.palette_idx[0]=p0; m_st.palette_idx[1]=p1; });
+
+        m_st.running=true; m_thread=std::thread(render_loop,std::ref(m_st));
     }
 
     ~MainWindow() override {
-        QSettings s("rgb-controller","rgb-controller");s.setValue("cooler_effect",m_pn[0]->effect->currentIndex());s.setValue("cooler_palette",m_pn[0]->palette->currentIndex());s.setValue("mouse_effect",m_pn[1]->effect->currentIndex());s.setValue("mouse_palette",m_pn[1]->palette->currentIndex());
-        m_st.running=false;m_st.cv.notify_all();if(m_thread.joinable())m_thread.join();
+        QSettings s("rgb-controller","rgb-controller");
+        s.setValue("cooler_effect",m_pn[0]->effect->currentIndex());
+        s.setValue("cooler_palette",m_pn[0]->palette->currentIndex());
+        s.setValue("mouse_effect",m_pn[1]->effect->currentIndex());
+        s.setValue("mouse_palette",m_pn[1]->palette->currentIndex());
+        m_st.running=false; m_st.cv.notify_all();
+        if(m_thread.joinable()) m_thread.join();
     }
+
 protected:
-    void closeEvent(QCloseEvent* e) override { if(m_tray&&m_tray->isVisible()){hide();e->ignore();}else e->accept(); }
+    void closeEvent(QCloseEvent* e) override {
+        if(m_tray && m_tray->isVisible()){ hide(); e->ignore(); }
+        else e->accept();
+    }
 };
 
-int main(int argc,char**argv){QApplication app(argc,argv);app.setOrganizationName("rgb-controller");app.setApplicationName("RGB Controller");app.setQuitOnLastWindowClosed(false);MainWindow w;w.show();return app.exec();}
+int main(int argc,char**argv){
+    QApplication app(argc,argv);
+    app.setOrganizationName("rgb-controller");
+    app.setApplicationName("RGB Controller");
+    app.setQuitOnLastWindowClosed(false);
+    MainWindow w; w.show();
+    return app.exec();
+}
 #include "main_standalone.moc"
