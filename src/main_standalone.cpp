@@ -321,37 +321,40 @@ public:
                 });
                 menu->addSeparator();
                 menu->addAction("🎨 Custom...",[this](){
-                    auto* dlg=new QDialog(this);
-                    dlg->setWindowTitle("Custom Palette");dlg->setFixedSize(300,150);
+                    auto* dlg=new QDialog(nullptr);
+                    dlg->setWindowTitle("Custom Palette");dlg->setFixedSize(340,190);
+                    dlg->setWindowFlags(Qt::Dialog|Qt::WindowStaysOnTopHint);
                     dlg->setStyleSheet("QDialog{background:#1e1e2e}QLabel{color:#cdd6f4}");
-                    auto* dl=new QVBoxLayout(dlg);
-                    auto* hl=new QHBoxLayout();
+                    auto* dl=new QVBoxLayout(dlg);dl->setSpacing(8);dl->setContentsMargins(12,12,12,12);
+
                     auto* hueSl=new QSlider(Qt::Horizontal);hueSl->setRange(0,360);hueSl->setValue(200);
-                    auto* hueLb=new QLabel("Hue: 200°");hueLb->setStyleSheet("color:#89b4fa;min-width:70px");
+                    auto* hueLb=new QLabel("Hue: 200°");hueLb->setStyleSheet("color:#89b4fa;min-width:70px;font-weight:bold");
                     connect(hueSl,&QSlider::valueChanged,[hueLb](int v){hueLb->setText(QString("Hue: %1°").arg(v));});
-                    hl->addWidget(hueLb);hl->addWidget(hueSl);
-                    dl->addLayout(hl);
-                    auto* sl=new QHBoxLayout();
+                    auto* hl=new QHBoxLayout();hl->addWidget(hueLb);hl->addWidget(hueSl);dl->addLayout(hl);
+
                     auto* spanSl=new QSlider(Qt::Horizontal);spanSl->setRange(5,60);spanSl->setValue(25);
-                    auto* spanLb=new QLabel("Span: 25°");spanLb->setStyleSheet("color:#89b4fa;min-width:70px");
+                    auto* spanLb=new QLabel("Span: 25°");spanLb->setStyleSheet("color:#89b4fa;min-width:70px;font-weight:bold");
                     connect(spanSl,&QSlider::valueChanged,[spanLb](int v){spanLb->setText(QString("Span: %1°").arg(v));});
-                    sl->addWidget(spanLb);sl->addWidget(spanSl);
-                    dl->addLayout(sl);
+                    auto* sp=new QHBoxLayout();sp->addWidget(spanLb);sp->addWidget(spanSl);dl->addLayout(sp);
+
                     auto* swPrev=new PaletteSwatch(dlg);swPrev->setPalette(200,25);
                     connect(hueSl,&QSlider::valueChanged,[swPrev,spanSl](int h){swPrev->setPalette((float)h,(float)spanSl->value());});
                     connect(spanSl,&QSlider::valueChanged,[swPrev,hueSl](int s){swPrev->setPalette((float)hueSl->value(),(float)s);});
                     dl->addWidget(swPrev);
-                    auto* applyBtn=new QPushButton("Apply to Both");
-                    applyBtn->setStyleSheet("QPushButton{background:#89b4fa;color:#1e1e2e;font-weight:bold;border-radius:6px;padding:8px}");
+
+                    auto* btnRow=new QHBoxLayout();
+                    auto* cancelBtn=new QPushButton("Cancel");cancelBtn->setStyleSheet("QPushButton{background:#45475a;color:#cdd6f4;border-radius:6px;padding:6px 16px}");
+                    connect(cancelBtn,&QPushButton::clicked,dlg,&QDialog::reject);
+                    auto* applyBtn=new QPushButton("Apply to Both");applyBtn->setStyleSheet("QPushButton{background:#89b4fa;color:#1e1e2e;font-weight:bold;border-radius:6px;padding:6px 16px}");
                     connect(applyBtn,&QPushButton::clicked,[this,dlg,hueSl,spanSl](){
                         float ch=(float)hueSl->value(), hs=(float)spanSl->value();
                         apply([=]{ m_st.palette_idx[0]=-1; m_st.palette_idx[1]=-1;
                                     m_st.custom_hue=ch; m_st.custom_span=hs; }, true);
                         dlg->accept();
                     });
-                    dl->addWidget(applyBtn);
-                    dlg->exec();
-                    dlg->deleteLater();
+                    btnRow->addStretch();btnRow->addWidget(cancelBtn);btnRow->addWidget(applyBtn);
+                    dl->addLayout(btnRow);
+                    dlg->exec();dlg->deleteLater();
                 });
                 menu->popup(sw->mapToGlobal(QPoint(0,sw->height())));
             });
