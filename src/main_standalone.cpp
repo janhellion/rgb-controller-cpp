@@ -81,6 +81,29 @@ protected:
     }
 };
 
+// ── Palette Gradient Swatch ──
+class PaletteSwatch : public QWidget {
+    Q_OBJECT
+    float m_center=200, m_span=30;
+public:
+    PaletteSwatch(QWidget* p=nullptr):QWidget(p){setFixedHeight(24);}
+    void setPalette(float center, float span){m_center=center;m_span=span;update();}
+protected:
+    void paintEvent(QPaintEvent*)override{
+        QPainter pt(this);pt.setRenderHint(QPainter::Antialiasing);
+        int w=width(), h=height(), n=32;
+        float step=m_span/(n-1);
+        for(int i=0;i<n;++i){
+            float hue=fmodf(m_center-m_span/2.f+i*step+360.f,360.f);
+            auto rgb=rgb::wave::hsv360_to_rgb(hue,0.8f,0.9f);
+            pt.setBrush(QColor(rgb.r,rgb.g,rgb.b));pt.setPen(Qt::NoPen);
+            pt.drawRect(QRectF(i*w/(float)n,0,w/(float)n+1,h));
+        }
+        pt.setPen(QPen(QColor(69,71,90),1));pt.setBrush(Qt::NoBrush);
+        pt.drawRoundedRect(0,0,w-1,h-1,6,6);
+    }
+};
+
 // ── Shared state (UI ↔ render thread) ──
 struct SharedState {
     std::atomic<bool> running{false};
@@ -172,6 +195,7 @@ class DevicePanel : public QGroupBox {
     Q_OBJECT
 public:
     QComboBox *effect, *palette;
+    PaletteSwatch *swatch;
     QLabel *status;
     DevicePanel(const QString& t, QWidget* p=nullptr):QGroupBox(t,p){
         auto* g=new QGridLayout(this);g->setSpacing(6);
@@ -183,8 +207,10 @@ public:
         palette=new QComboBox(this);
         for(int i=0;i<PALETTE_COUNT;++i)palette->addItem(PALETTES[i].name);
         g->addWidget(palette,1,1);
+        swatch=new PaletteSwatch(this);
+        g->addWidget(swatch,2,0,1,2);
         status=new QLabel(this);status->setStyleSheet("color:#a6e3a1;font-size:11px");
-        g->addWidget(status,2,0,1,2);
+        g->addWidget(status,3,0,1,2);
     }
 };
 
@@ -269,7 +295,10 @@ public:
             connect(m_pn[di]->effect,QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){ set_setting([&]{ m_st.effect_idx[di]=i; }); });
             connect(m_pn[di]->palette,QOverload<int>::of(&QComboBox::currentIndexChanged),
-                [this,di](int i){ set_setting([&]{ m_st.palette_idx[di]=i; }); });
+                [this,di](int i){
+                    set_setting([&]{ m_st.palette_idx[di]=i; });
+                    m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
+                });
             lo->addWidget(m_pn[di]);
         }
 
@@ -352,6 +381,11 @@ public:
         m_pn[0]->palette->setCurrentIndex(s.value("cooler_palette",0).toInt());
         m_pn[1]->effect->setCurrentIndex(s.value("mouse_effect",0).toInt());
         m_pn[1]->palette->setCurrentIndex(s.value("mouse_palette",0).toInt());
+        // Init swatches
+        m_pn[0]->swatch->setPalette(PALETTES[m_pn[0]->palette->currentIndex()].center,
+                                     PALETTES[m_pn[0]->palette->currentIndex()].span);
+        m_pn[1]->swatch->setPalette(PALETTES[m_pn[1]->palette->currentIndex()].center,
+                                     PALETTES[m_pn[1]->palette->currentIndex()].span);
 
         // ── Start render thread ──
         m_st.running=true;
