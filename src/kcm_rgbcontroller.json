@@ -8,6 +8,7 @@
                 "Name": "Jan Hellion"
             }
         ],
-        "Category": "Input Devices"
+        "Category": "Input Devices",
+        "X-KDE-System-Settings-Parent-Category": "input-devices"
     }
 }
