@@ -103,6 +103,7 @@ protected:
 // ── Thread-safe shared state ──
 struct SharedState {
     std::atomic<bool> running{false}, enabled{true}, temp_mode{false}, wake{false};
+    std::atomic<bool> reset_timer{false};  // reset animation on palette change
     std::mutex mtx;
     int effect_idx[2]={0,0}, palette_idx[2]={0,0};
     float speed=0.15f, intensity=1.0f, breath_depth=0.15f;
@@ -133,6 +134,7 @@ static void render_loop(SharedState& st){
         if(!st.running) break;
 
         auto now=std::chrono::steady_clock::now();
+        if(st.reset_timer.exchange(false)){ t0=now; }
         float t=std::chrono::duration<float>(now-t0).count();
         float ct=-1, gt=-1;
         if(st.temp_mode && frame%30==0){ct=cpu_temp();gt=gpu_temp();}
@@ -195,7 +197,11 @@ class MainWindow : public QMainWindow {
     QTimer *m_ui_timer; QSystemTrayIcon *m_tray=nullptr; QTabWidget *m_tabs;
 
     void wake(){ m_st.wake=true; m_st.cv.notify_one(); }
-    template<typename F> void apply(F fn){ std::lock_guard<std::mutex> lk(m_st.mtx); fn(); wake(); }
+    template<typename F> void apply(F fn, bool reset=false){
+        std::lock_guard<std::mutex> lk(m_st.mtx); fn();
+        if(reset) m_st.reset_timer=true;
+        wake();
+    }
 
 public:
     MainWindow(){
@@ -253,7 +259,7 @@ public:
                 [this,di](int i){ apply([=]{ m_st.effect_idx[di]=i; }); });
             connect(m_pn[di]->palette, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 [this,di](int i){
-                    apply([=]{ m_st.palette_idx[di]=i; });
+                    apply([=]{ m_st.palette_idx[di]=i; }, true);
                     m_pn[di]->swatch->setPalette(PALETTES[i].center, PALETTES[i].span);
                 });
             devLo->addWidget(m_pn[di]);
@@ -294,17 +300,17 @@ public:
                 menu->setStyleSheet("QMenu{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px}QMenu::item{padding:6px 24px;border-radius:3px}QMenu::item:selected{background:#45475a}");
                 menu->addAction("❄ Apply to Cooler",[this,idx](){
                     m_pn[0]->palette->setCurrentIndex(idx);
-                    apply([=]{ m_st.palette_idx[0]=idx; });
+                    apply([=]{ m_st.palette_idx[0]=idx; }, true);
                 });
                 menu->addAction("🖱 Apply to Mouse",[this,idx](){
                     m_pn[1]->palette->setCurrentIndex(idx);
-                    apply([=]{ m_st.palette_idx[1]=idx; });
+                    apply([=]{ m_st.palette_idx[1]=idx; }, true);
                 });
                 menu->addSeparator();
                 menu->addAction("Apply to Both",[this,idx](){
                     m_pn[0]->palette->setCurrentIndex(idx);
                     m_pn[1]->palette->setCurrentIndex(idx);
-                    apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; });
+                    apply([=]{ m_st.palette_idx[0]=idx; m_st.palette_idx[1]=idx; }, true);
                 });
                 menu->popup(sw->mapToGlobal(QPoint(0,sw->height())));
             });
