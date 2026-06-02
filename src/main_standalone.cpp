@@ -136,9 +136,9 @@ static void render_loop(SharedState& st){
           st.wake=false; }
         if(!st.running) break;
 
-        // Enforce minimum 20ms between frames
+        // Enforce minimum 33ms between frames (~30 FPS max)
         auto elapsed=std::chrono::steady_clock::now()-last_frame;
-        if(elapsed<20ms) std::this_thread::sleep_for(20ms-elapsed);
+        if(elapsed<33ms) std::this_thread::sleep_for(33ms-elapsed);
         last_frame=std::chrono::steady_clock::now();
 
         auto now=std::chrono::steady_clock::now();

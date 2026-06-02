@@ -134,7 +134,7 @@ static void kcm_render_loop(KCMSharedState& st) {
         if(!st.running) break;
 
         auto elapsed = std::chrono::steady_clock::now() - last_frame;
-        if(elapsed < 20ms) std::this_thread::sleep_for(20ms - elapsed);
+        if(elapsed < 33ms) std::this_thread::sleep_for(33ms - elapsed);
         last_frame = std::chrono::steady_clock::now();
 
         auto now = std::chrono::steady_clock::now();
