@@ -21,6 +21,8 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QCloseEvent>
+#include <QScrollArea>
+#include <QMouseEvent>
 
 #include <thread>
 #include <atomic>
@@ -37,12 +39,23 @@
 using namespace std::chrono_literals;
 
 // ── Palettes ──
-struct Palette { const char* name; float center; float span; };
+struct Palette { const char* name; const char* desc; float center; float span; };
 static const Palette PALETTES[] = {
-    {"Ocean",200,30},{"Forest",120,25},{"Sunset",25,20},{"Lava",10,15},
-    {"Berry",280,30},{"Mint",160,20},{"Coral",15,25},{"Midnight",240,15},
-    {"Citrus",45,20},{"Lavender",270,25},{"Teal",180,30},{"Rose",340,20},
-    {"Amber",35,12},{"Arctic",195,40},{"Candy",320,35},
+    {"Ocean",   "Deep blues to turquoise",       200,30},
+    {"Forest",  "Emerald green to lime",         120,25},
+    {"Sunset",  "Golden hour warmth",            25, 20},
+    {"Lava",    "Crimson red to deep orange",    10, 15},
+    {"Berry",   "Purple to magenta crush",       280,30},
+    {"Mint",    "Cool seafoam to aqua",          160,20},
+    {"Coral",   "Pink to peach reef",            15, 25},
+    {"Midnight","Dark navy to indigo",            240,15},
+    {"Citrus",  "Lemon to tangerine zest",       45, 20},
+    {"Lavender","Soft violet to lilac",          270,25},
+    {"Teal",    "Blue-green lagoon",             180,30},
+    {"Rose",    "Blush pink to crimson",         340,20},
+    {"Amber",   "Warm honey to bronze",          35, 12},
+    {"Arctic",  "Ice blue to cyan frost",        195,40},
+    {"Candy",   "Bubblegum pink to grape",        320,35},
 };
 static constexpr int PALETTE_COUNT = sizeof(PALETTES)/sizeof(PALETTES[0]);
 
@@ -81,13 +94,19 @@ protected:
     }
 };
 
-// ── Palette Gradient Swatch ──
+// ── Palette Gradient Swatch (clickable) ──
 class PaletteSwatch : public QWidget {
     Q_OBJECT
     float m_center=200, m_span=30;
+    bool m_hovered=false;
 public:
-    PaletteSwatch(QWidget* p=nullptr):QWidget(p){setFixedHeight(24);}
+    PaletteSwatch(QWidget* p=nullptr):QWidget(p){
+        setFixedHeight(28);setCursor(Qt::PointingHandCursor);
+        setMouseTracking(true);
+    }
     void setPalette(float center, float span){m_center=center;m_span=span;update();}
+signals:
+    void clicked();
 protected:
     void paintEvent(QPaintEvent*)override{
         QPainter pt(this);pt.setRenderHint(QPainter::Antialiasing);
@@ -99,9 +118,12 @@ protected:
             pt.setBrush(QColor(rgb.r,rgb.g,rgb.b));pt.setPen(Qt::NoPen);
             pt.drawRect(QRectF(i*w/(float)n,0,w/(float)n+1,h));
         }
-        pt.setPen(QPen(QColor(69,71,90),1));pt.setBrush(Qt::NoBrush);
-        pt.drawRoundedRect(0,0,w-1,h-1,6,6);
+        pt.setPen(QPen(m_hovered?QColor(137,180,250):QColor(69,71,90),m_hovered?2:1));
+        pt.setBrush(Qt::NoBrush);pt.drawRoundedRect(0,0,w-1,h-1,6,6);
     }
+    void enterEvent(QEnterEvent*)override{m_hovered=true;update();}
+    void leaveEvent(QEvent*)override{m_hovered=false;update();}
+    void mousePressEvent(QMouseEvent*)override{emit clicked();}
 };
 
 // ── Shared state (UI ↔ render thread) ──
@@ -301,6 +323,34 @@ public:
                 });
             lo->addWidget(m_pn[di]);
         }
+
+        // ── Palette browser (visual grid) ──
+        auto* pg = new QGroupBox("Palette Browser — click to apply to both devices", this);
+        auto* pglo = new QVBoxLayout(pg);
+        auto* pscroll = new QScrollArea(this);
+        pscroll->setFrameShape(QFrame::NoFrame);
+        pscroll->setWidgetResizable(true);
+        pscroll->setMaximumHeight(180);
+        auto* pw = new QWidget();
+        auto* pwlo = new QVBoxLayout(pw);pwlo->setSpacing(2);
+        for (int i = 0; i < PALETTE_COUNT; ++i) {
+            auto* sw = new PaletteSwatch(pw);
+            sw->setPalette(PALETTES[i].center, PALETTES[i].span);
+            auto* info = new QLabel(QString("  %1 — %2").arg(PALETTES[i].name).arg(PALETTES[i].desc), pw);
+            info->setStyleSheet("color:#a6adc8;font-size:10px;padding-left:4px");
+            connect(sw, &PaletteSwatch::clicked, [this, i]() {
+                // Apply to both devices
+                m_pn[0]->palette->setCurrentIndex(i);
+                m_pn[1]->palette->setCurrentIndex(i);
+                set_setting([&]{ m_st.palette_idx[0]=i; m_st.palette_idx[1]=i; });
+            });
+            pwlo->addWidget(sw);
+            pwlo->addWidget(info);
+        }
+        pwlo->addStretch();
+        pscroll->setWidget(pw);
+        pglo->addWidget(pscroll);
+        lo->addWidget(pg);
 
         // ── Sliders ──
         auto* sg=new QGroupBox("Global Speed & Brightness",this);
