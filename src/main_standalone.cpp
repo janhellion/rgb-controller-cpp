@@ -120,6 +120,12 @@ protected:
         const int ZONE_COUNT = 2;
         const uint32_t ZONES[ZONE_COUNT][3] = {{0,1,7}, {1,0,3}};
 
+        // Resize zones ONCE (not every frame — ASUS AURA locks up otherwise)
+        for (int zi = 0; zi < ZONE_COUNT; ++zi) {
+            client.resize_zone(ZONES[zi][0], ZONES[zi][1], ZONES[zi][2]);
+        }
+        client.drain();  // drain all resize acks
+
         auto t_start = std::chrono::steady_clock::now();
         int frame = 0;
 
@@ -174,9 +180,6 @@ protected:
                 }
 
                 if (colors.size() >= led_count * 3) {
-                    client.resize_zone(dev_id, zone_id, led_count);
-                    client.drain();  // ASUS AURA drain
-
                     std::vector<uint8_t> update_data;
                     update_data.reserve(led_count * 3);
                     for (uint32_t li = 0; li < led_count && li < 60; ++li) {
@@ -188,8 +191,6 @@ protected:
 
                     if (!client.update_zone_leds(dev_id, zone_id, update_data))
                         fprintf(stderr, "RGB: update FAILED dev=%u zone=%u\n", dev_id, zone_id);
-
-                    client.drain();
 
                     // Capture preview from cooler first LED
                     if (zi == 0) {
